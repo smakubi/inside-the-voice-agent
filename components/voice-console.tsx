@@ -53,6 +53,7 @@ export function VoiceConsole({ architecture, onArchitectureChange }: Props) {
   const [showTextInput, setShowTextInput] = useState(false);
   const [sessionActive, setSessionActive] = useState(false);
   const [selectedStageId, setSelectedStageId] = useState<string>();
+  const messagesRef = useRef<ConversationMessage[]>([]);
   const recorderRef = useRef<MediaRecorder | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const chunksRef = useRef<Blob[]>([]);
@@ -91,11 +92,19 @@ export function VoiceConsole({ architecture, onArchitectureChange }: Props) {
   }, []);
 
   useEffect(() => {
-    transcriptEndRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    transcriptEndRef.current?.scrollIntoView?.({ behavior: "smooth", block: "nearest" });
   }, [messages.length]);
 
   function updateStage(nextStage: VoiceStage) {
     setStage(nextStage);
+  }
+
+  function appendMessage(message: ConversationMessage) {
+    setMessages((current) => {
+      const nextMessages = [...current, message];
+      messagesRef.current = nextMessages;
+      return nextMessages;
+    });
   }
 
   function clearTurnMonitoring() {
@@ -139,6 +148,7 @@ export function VoiceConsole({ architecture, onArchitectureChange }: Props) {
 
   function startNewConversation() {
     endConversation();
+    messagesRef.current = [];
     setMessages([]);
     setTimings({});
     setError("");
@@ -179,8 +189,8 @@ export function VoiceConsole({ architecture, onArchitectureChange }: Props) {
 
   async function generateResponse(userText: string, continuous: boolean) {
     setError("");
-    const priorMessages = messages.slice(-10);
-    setMessages((current) => [...current, { role: "user", content: userText }]);
+    const priorMessages = messagesRef.current.slice(-10);
+    appendMessage({ role: "user", content: userText });
     updateStage("thinking");
     const controller = new AbortController();
     abortControllerRef.current = controller;
@@ -201,7 +211,7 @@ export function VoiceConsole({ architecture, onArchitectureChange }: Props) {
 
       if (!response.ok) throw new Error(await readError(response));
       const { text } = (await response.json()) as { text: string };
-      setMessages((current) => [...current, { role: "assistant", content: text }]);
+      appendMessage({ role: "assistant", content: text });
       updateStage("speaking");
 
       const speechResponse = await measured("text-to-speech", () =>
@@ -340,10 +350,10 @@ export function VoiceConsole({ architecture, onArchitectureChange }: Props) {
     if (event.type === "input_audio_buffer.speech_stopped" || event.type === "response.created") updateStage("thinking");
     if (event.type === "response.output_audio.delta") updateStage("speaking");
     if (event.type === "conversation.item.input_audio_transcription.completed" && event.transcript?.trim()) {
-      setMessages((current) => [...current, { role: "user", content: event.transcript!.trim() }]);
+      appendMessage({ role: "user", content: event.transcript.trim() });
     }
     if (event.type === "response.output_audio_transcript.done" && event.transcript?.trim()) {
-      setMessages((current) => [...current, { role: "assistant", content: event.transcript!.trim() }]);
+      appendMessage({ role: "assistant", content: event.transcript.trim() });
     }
     if (event.type === "response.output_audio.done" || event.type === "response.done") updateStage("listening");
     if (event.type === "error") failSession(event.error?.message ?? "The realtime session stopped unexpectedly.");
@@ -441,7 +451,7 @@ export function VoiceConsole({ architecture, onArchitectureChange }: Props) {
     if (!message) return;
     if (architecture === "realtime" && realtimeChannel?.readyState === "open") {
       setTextInput("");
-      setMessages((current) => [...current, { role: "user", content: message }]);
+      appendMessage({ role: "user", content: message });
       updateStage("thinking");
       realtimeChannel.send(JSON.stringify({
         type: "conversation.item.create",
@@ -466,7 +476,7 @@ export function VoiceConsole({ architecture, onArchitectureChange }: Props) {
           <div>
             <p className="text-sm font-medium text-blue-700">Conversation</p>
             <h2 className="mt-1 text-2xl font-semibold tracking-[-0.03em] text-slate-950">Speak naturally</h2>
-            <p className="mt-2 max-w-xl text-sm leading-6 text-slate-500">{architecture === "cascaded" ? "Start once, then talk normally. A short pause sends your turn, and the microphone resumes after each answer." : "Start once for a continuous, low-latency conversation over WebRTC."}</p>
+            <p className="mt-2 max-w-xl text-sm leading-6 text-slate-500">{architecture === "cascaded" ? "Start once, then talk normally. A short pause sends your turn, and the microphone resumes after each answer." : "Start once for a continuous, low-latency conversation over WebRTC."} The agent remembers earlier turns until you start a new conversation.</p>
           </div>
           <button type="button" onClick={startNewConversation} className="inline-flex shrink-0 items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-600 transition hover:border-slate-300 hover:text-slate-950"><Plus className="size-3.5" />New conversation</button>
         </div>

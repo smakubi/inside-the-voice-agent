@@ -2,7 +2,34 @@
 
 import { Check, Copy, X } from "lucide-react";
 import { useState } from "react";
+import type { ReactNode } from "react";
 import type { CodeSnippet } from "@/config/code-snippets";
+
+const pythonTokens = /(#.*$)|("""[\s\S]*?"""|'''[\s\S]*?'''|"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*')|(\b(?:False|None|True|and|as|assert|async|await|break|class|continue|def|del|elif|else|except|finally|for|from|global|if|import|in|is|lambda|nonlocal|not|or|pass|raise|return|try|while|with|yield)\b)|(\b[A-Za-z_]\w*(?=\s*\())|(\b\d+(?:_\d+)*(?:\.\d+)?\b)/gm;
+
+function highlightPython(code: string) {
+  const output: ReactNode[] = [];
+  let cursor = 0;
+
+  for (const match of code.matchAll(pythonTokens)) {
+    const index = match.index ?? 0;
+    if (index > cursor) output.push(code.slice(cursor, index));
+    const color = match[1]
+      ? "text-slate-500 italic"
+      : match[2]
+        ? "text-amber-300"
+        : match[3]
+          ? "text-fuchsia-300"
+          : match[4]
+            ? "text-sky-300"
+            : "text-emerald-300";
+    output.push(<span key={`${index}-${match[0]}`} className={color}>{match[0]}</span>);
+    cursor = index + match[0].length;
+  }
+
+  if (cursor < code.length) output.push(code.slice(cursor));
+  return output;
+}
 
 export function CodeInspector({ snippet, onClose }: { snippet?: CodeSnippet; onClose: () => void }) {
   const [copied, setCopied] = useState(false);
@@ -26,7 +53,7 @@ export function CodeInspector({ snippet, onClose }: { snippet?: CodeSnippet; onC
         <p className="text-sm leading-6 text-slate-600">{snippet.note}</p>
         <div className="mt-4 overflow-hidden rounded-xl bg-slate-950">
           <div className="flex items-center justify-between border-b border-white/10 px-4 py-2.5"><span className="text-xs font-medium text-slate-400">python</span><button type="button" onClick={copyCode} className="inline-flex items-center gap-1.5 text-xs font-medium text-slate-300 hover:text-white">{copied ? <Check className="size-3.5" /> : <Copy className="size-3.5" />}{copied ? "Copied" : "Copy"}</button></div>
-          <pre className="overflow-x-auto p-4 text-[13px] leading-6 text-slate-200"><code>{snippet.code}</code></pre>
+          <pre className="overflow-x-auto p-4 text-[13px] leading-6 text-slate-200"><code>{highlightPython(snippet.code)}</code></pre>
         </div>
       </div>
     </aside>

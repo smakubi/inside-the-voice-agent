@@ -9,6 +9,7 @@ export interface PipelineStageDefinition {
   shortLabel: string;
   description: string;
   technology: string;
+  metricLabel: "Duration" | "Latency";
   placeholderLatency: string;
   status: StageStatus;
   icon: LucideIcon;

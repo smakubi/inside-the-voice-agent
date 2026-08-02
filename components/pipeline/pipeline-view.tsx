@@ -28,7 +28,7 @@ export function PipelineView({ architecture, activeStage, timings, selectedStage
       <div>
         <div className="flex items-center justify-between gap-3"><p className="text-xs font-semibold uppercase tracking-[0.12em] text-blue-700">Pipeline</p><span className="rounded-full bg-emerald-100 px-2.5 py-1 text-[11px] font-semibold text-emerald-700">Live stack</span></div>
         <h2 id="pipeline-heading" className="mt-1 text-xl font-semibold tracking-[-0.025em] text-slate-950">{architecture === "cascaded" ? "Cascaded processing" : "Speech-to-speech processing"}</h2>
-        <p className="mt-2 text-sm leading-6 text-slate-500">{architecture === "cascaded" ? "Watch the active handoff and measured time at each step." : "Audio travels over WebRTC, with live web search available for current facts."} Completed steps show the latest observed latency. Click any step to inspect its Python equivalent.</p>
+        <p className="mt-2 text-sm leading-6 text-slate-500">{architecture === "cascaded" ? "Watch the active handoff and measured time at each step." : "Audio travels over WebRTC, with live web search available for current facts."} Completed steps distinguish processing latency from audio duration. Click any step to inspect its Python equivalent.</p>
       </div>
       <AnimatePresence mode="wait" initial={false}>
         <motion.div key={architecture} initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -6 }} transition={{ duration: 0.18 }} className="mt-5 grid gap-2">

@@ -44,19 +44,27 @@ print(transcript.text)`,
   },
   "cascaded:language-model": {
     title: "Generate the answer",
-    technology: "OpenAI · gpt-5.6-luna",
-    note: "Send the transcript to the Responses API and keep the answer short enough for speech.",
-    code: `from openai import OpenAI
+    technology: "Baseten · thinkingmachines/inkling-small",
+    note: "Baseten exposes Inkling through an OpenAI-compatible endpoint. This demo uses a non-streaming response because the next stage needs the complete text for speech synthesis.",
+    code: `import os
+from openai import OpenAI
 
-client = OpenAI()
-response = client.responses.create(
-    model="gpt-5.6-luna",
-    instructions="Reply naturally in 1–3 sentences.",
-    input=transcript.text,
-    reasoning={"effort": "none"},
+client = OpenAI(
+    api_key=os.environ["BASETEN_API_KEY"],
+    base_url="https://inference.baseten.co/v1",
 )
 
-answer = response.output_text`,
+response = client.chat.completions.create(
+    model="thinkingmachines/inkling-small",
+    messages=[
+        {"role": "system", "content": "Reply naturally in 1–3 sentences."},
+        {"role": "user", "content": transcript.text},
+    ],
+    temperature=0.7,
+    max_tokens=220,
+)
+
+answer = response.choices[0].message.content`,
   },
   "cascaded:text-to-speech": {
     title: "Synthesize speech",

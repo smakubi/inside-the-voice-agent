@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { voiceModels } from "@/config/models";
-import { getOpenAI } from "@/lib/openai";
+import { getBaseten } from "@/lib/baseten";
 
 const messageSchema = z.object({
   role: z.enum(["user", "assistant"]),
@@ -17,23 +17,28 @@ const requestSchema = z.object({
 export async function POST(request: Request) {
   try {
     const body = requestSchema.parse(await request.json());
-    const response = await getOpenAI().responses.create({
+    const response = await getBaseten().chat.completions.create({
       model: voiceModels.response,
-      reasoning: { effort: "none" },
-      instructions: [
-        "You are a warm, practical voice assistant in a live spoken conversation.",
-        "Answer directly in one to three short sentences unless the user asks for detail.",
-        "Use natural spoken language. Do not use markdown, headings, or lists.",
-      ].join("\n"),
-      input: [
+      messages: [
+        {
+          role: "system",
+          content: [
+            "You are a warm, practical voice assistant in a live spoken conversation.",
+            "Answer directly in one to three short sentences unless the user asks for detail.",
+            "Use natural spoken language. Do not use markdown, headings, or lists.",
+          ].join("\n"),
+        },
         ...body.history,
         { role: "user" as const, content: body.text },
       ],
-      max_output_tokens: 220,
-      safety_identifier: body.safetyIdentifier,
+      temperature: 0.7,
+      top_p: 1,
+      max_tokens: 220,
+      presence_penalty: 0,
+      frequency_penalty: 0,
     });
 
-    const text = response.output_text.trim();
+    const text = response.choices[0]?.message.content?.trim();
     if (!text) {
       throw new Error("The model returned an empty response");
     }

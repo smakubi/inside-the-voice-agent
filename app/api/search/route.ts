@@ -11,7 +11,7 @@ export async function POST(request: Request) {
   try {
     const { query } = requestSchema.parse(await request.json());
     const response = await getOpenAI().responses.create({
-      model: voiceModels.response,
+      model: voiceModels.webSearch,
       reasoning: { effort: "none" },
       tools: [{ type: "web_search" }],
       tool_choice: "auto",

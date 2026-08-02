@@ -24,6 +24,11 @@ jobs:
         with:
           node-version: 22
 
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.28.0
+
       - name: Pull Vercel project settings
         run: npx vercel@58.4.4 pull --yes --environment=production --token="${{ secrets.VERCEL_TOKEN }}"
         env:

@@ -17,6 +17,7 @@ export function SiteHeader({ showStatus = false }: Props) {
       <div className="flex items-center gap-4">
         <nav aria-label="Primary" className="flex items-center gap-1 rounded-xl border border-slate-200 bg-white p-1 text-sm font-medium text-slate-600">
           <Link href="/" className="rounded-lg px-3 py-1.5 transition hover:bg-slate-100 hover:text-slate-950">Demo</Link>
+          <Link href="/architecture" className="rounded-lg px-3 py-1.5 transition hover:bg-slate-100 hover:text-slate-950">Architecture</Link>
           <Link href="/providers" className="rounded-lg px-3 py-1.5 transition hover:bg-slate-100 hover:text-slate-950">Providers</Link>
         </nav>
         {showStatus ? <span className="hidden items-center gap-2 text-sm text-slate-500 lg:flex"><span className="size-2 rounded-full bg-emerald-500" />Voice service ready</span> : null}

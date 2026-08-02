@@ -2,6 +2,7 @@ import type { ArchitectureMode } from "@/types/pipeline";
 
 export interface CodeSnippet {
   title: string;
+  path: string;
   technology: string;
   note: string;
   code: string;
@@ -10,6 +11,7 @@ export interface CodeSnippet {
 const snippets: Record<string, CodeSnippet> = {
   "cascaded:user-audio": {
     title: "Capture user audio",
+    path: "browser → audio turn",
     technology: "MediaRecorder + Web Audio API",
     note: "The browser demo uses MediaRecorder. This is the closest small Python equivalent for recording one turn.",
     code: `import sounddevice as sd
@@ -28,6 +30,7 @@ write("turn.wav", sample_rate, audio)`,
   },
   "cascaded:speech-to-text": {
     title: "Transcribe speech",
+    path: "POST /api/transcribe",
     technology: "OpenAI · gpt-transcribe",
     note: "Upload the completed audio turn and read the returned transcript.",
     code: `from openai import OpenAI
@@ -44,6 +47,7 @@ print(transcript.text)`,
   },
   "cascaded:language-model": {
     title: "Generate the answer",
+    path: "POST /api/respond",
     technology: "Baseten · zai-org/GLM-4.7",
     note: "The TypeScript demo uses Vercel AI SDK generateText with Baseten's OpenAI-compatible chat endpoint. GLM 4.7 keeps thinking off by default for faster voice responses.",
     code: `import os
@@ -68,6 +72,7 @@ answer = response.choices[0].message.content`,
   },
   "cascaded:text-to-speech": {
     title: "Synthesize speech",
+    path: "POST /api/speak",
     technology: "OpenAI · gpt-4o-mini-tts",
     note: "Convert the model's text answer into an MP3 response.",
     code: `from pathlib import Path
@@ -85,6 +90,7 @@ with client.audio.speech.with_streaming_response.create(
   },
   "cascaded:assistant-audio": {
     title: "Play assistant audio",
+    path: "audio response → browser",
     technology: "Browser Audio API",
     note: "The browser uses an HTML audio element. Python can decode and play the generated file locally.",
     code: `import sounddevice as sd
@@ -96,6 +102,7 @@ sd.wait()`,
   },
   "realtime:user-audio": {
     title: "Stream microphone audio",
+    path: "microphone → WebRTC track",
     technology: "WebRTC microphone",
     note: "The live demo sends the browser microphone track over WebRTC. A Python client can stream PCM frames from sounddevice.",
     code: `import sounddevice as sd
@@ -114,6 +121,7 @@ stream.start()`,
   },
   "realtime:realtime-model": {
     title: "Run speech-to-speech",
+    path: "WebRTC → gpt-realtime-2.1",
     technology: "OpenAI · gpt-realtime-2.1 + web search",
     note: "The browser demo uses WebRTC and exposes a web_search function. This Python teaching equivalent shows the same tool configuration over a Realtime WebSocket.",
     code: `import json
@@ -150,6 +158,7 @@ ws.send(json.dumps({
   },
   "realtime:assistant-audio": {
     title: "Play streamed audio",
+    path: "remote WebRTC track → speaker",
     technology: "WebRTC audio stream",
     note: "WebRTC plays the remote media track automatically. A Python WebSocket client decodes each audio delta before playback.",
     code: `import base64

@@ -1,10 +1,14 @@
 # Inside the Voice Agent
 
-A classroom-focused interface for comparing cascaded and native speech-to-speech voice architectures.
+A classroom-focused, working voice agent for comparing cascaded and native speech-to-speech architectures.
 
-## Milestone 1
+## Teaching views
 
-This milestone is intentionally static. It includes the responsive teaching interface, architecture diagrams, scenario context, instructor control state, and inspector placeholders. It does not record audio, call AI providers, simulate pipeline execution, or require environment variables.
+- `/` runs the live voice demo and shows active stages and latency.
+- `/architecture` walks through the execution graph and Python equivalent component by component.
+- `/providers` compares native speech-to-speech providers with cascaded and hybrid platforms.
+
+The live demo supports a cascaded OpenAI/Baseten pipeline and OpenAI Realtime over WebRTC. Server-side API keys are required for provider calls.
 
 ## Development
 

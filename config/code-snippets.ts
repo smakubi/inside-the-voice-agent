@@ -44,8 +44,8 @@ print(transcript.text)`,
   },
   "cascaded:language-model": {
     title: "Generate the answer",
-    technology: "Baseten · thinkingmachines/inkling-small",
-    note: "The TypeScript demo uses Vercel AI SDK generateText with Baseten's OpenAI-compatible chat endpoint. This Python example is the equivalent learner implementation.",
+    technology: "Baseten · zai-org/GLM-4.7",
+    note: "The TypeScript demo uses Vercel AI SDK generateText with Baseten's OpenAI-compatible chat endpoint. GLM 4.7 keeps thinking off by default for faster voice responses.",
     code: `import os
 from openai import OpenAI
 
@@ -55,12 +55,12 @@ client = OpenAI(
 )
 
 response = client.chat.completions.create(
-    model="thinkingmachines/inkling-small",
+    model="zai-org/GLM-4.7",
     messages=[
         {"role": "system", "content": "Reply naturally in 1–3 sentences."},
         {"role": "user", "content": transcript.text},
     ],
-    temperature=0.7,
+    temperature=0.3,
     max_tokens=220,
 )
 
@@ -131,7 +131,7 @@ ws.send(json.dumps({
     "session": {
         "type": "realtime",
         "model": "gpt-realtime-2.1",
-        "reasoning": {"effort": "low"},
+        "reasoning": {"effort": "minimal"},
         "output_modalities": ["audio"],
         "audio": {"output": {"voice": "marin"}},
         "tools": [{

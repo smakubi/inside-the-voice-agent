@@ -3,6 +3,7 @@ import { generateText } from "ai";
 import { z } from "zod";
 import { voiceModels } from "@/config/models";
 import { getBaseten } from "@/lib/baseten";
+import { generateNonEmptyResponse } from "@/lib/non-empty-response";
 
 const messageSchema = z.object({
   role: z.enum(["user", "assistant"]),
@@ -18,25 +19,24 @@ const requestSchema = z.object({
 export async function POST(request: Request) {
   try {
     const body = requestSchema.parse(await request.json());
-    const { text } = await generateText({
-      model: getBaseten().chat(voiceModels.response),
-      instructions: [
-        "You are a warm, practical voice assistant in a live spoken conversation.",
-        "Answer directly in one to three short sentences unless the user asks for detail.",
-        "Use natural spoken language. Do not use markdown, headings, or lists.",
-      ].join("\n"),
-      messages: [
-        ...body.history,
-        { role: "user" as const, content: body.text },
-      ],
-      temperature: 0.7,
-      maxOutputTokens: 220,
+    const baseten = getBaseten();
+    const answer = await generateNonEmptyResponse(async () => {
+      const { text } = await generateText({
+        model: baseten.chat(voiceModels.response),
+        instructions: [
+          "You are a practical voice assistant in a live spoken conversation.",
+          "Answer directly in one to three short sentences unless the user asks for detail.",
+          "Use natural spoken language. Do not use markdown, headings, or lists.",
+        ].join("\n"),
+        messages: [
+          ...body.history,
+          { role: "user" as const, content: body.text },
+        ],
+        temperature: 0.3,
+        maxOutputTokens: 220,
+      });
+      return text;
     });
-
-    const answer = text.trim();
-    if (!answer) {
-      throw new Error("The model returned an empty response");
-    }
 
     return NextResponse.json({ text: answer });
   } catch (error) {
@@ -46,7 +46,7 @@ export async function POST(request: Request) {
 
     console.error("Response generation failed", error);
     return NextResponse.json(
-      { error: "I couldn't create a response. Check the API key and try again." },
+      { error: "The language model didn't return an answer. Please try again." },
       { status: 502 },
     );
   }

@@ -1,6 +1,6 @@
 export const voiceModels = {
   transcription: "gpt-transcribe",
-  response: "thinkingmachines/inkling-small",
+  response: "zai-org/GLM-4.7",
   webSearch: "gpt-5.6-luna",
   speech: "gpt-4o-mini-tts",
   realtime: "gpt-realtime-2.1",

@@ -30,7 +30,7 @@ export async function POST(request: Request) {
       "Use web_search before answering current or recent facts, news, politics, public officeholders, schedules, prices, weather, or information likely to have changed.",
       "After web search, answer from the result and briefly name the source and date when useful.",
     ].join("\n\n"),
-    reasoning: { effort: "low" },
+    reasoning: { effort: "minimal" },
     output_modalities: ["audio"],
     audio: {
       input: {

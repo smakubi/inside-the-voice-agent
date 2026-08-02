@@ -14,8 +14,17 @@ describe("AppShell", () => {
     await user.click(screen.getByRole("radio", { name: /Speech-to-speech/ }));
     expect(await screen.findByText("Realtime Model")).toBeInTheDocument();
     expect(screen.getByText(/gpt-realtime-1.5/)).toBeInTheDocument();
-    expect(screen.getByText("Reference only")).toBeInTheDocument();
+    expect(screen.getByText("Live stack")).toBeInTheDocument();
     expect(screen.getAllByTestId("pipeline-stage")).toHaveLength(3);
+  });
+
+  it("opens a Python example for each pipeline stage", async () => {
+    const user = userEvent.setup();
+    render(<AppShell />);
+    await user.click(screen.getByRole("button", { name: "View Python code for Speech-to-Text" }));
+    expect(screen.getByRole("complementary", { name: "Python code inspector" })).toBeInTheDocument();
+    expect(screen.getByText("Transcribe speech")).toBeInTheDocument();
+    expect(screen.getByText(/client.audio.transcriptions.create/)).toBeInTheDocument();
   });
 
   it("keeps the pipeline beside the conversation workspace", () => {
@@ -34,6 +43,7 @@ describe("AppShell", () => {
   it("makes the live recording action prominent", () => {
     render(<AppShell />);
     expect(screen.getByRole("button", { name: "Start conversation" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "New conversation" })).toBeInTheDocument();
     expect(screen.getByText(/AI-generated/)).toBeInTheDocument();
   });
 });

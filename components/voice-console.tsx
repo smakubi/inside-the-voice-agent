@@ -1,13 +1,15 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { Keyboard, Mic, Send, Square, Volume2 } from "lucide-react";
+import { Keyboard, Mic, Plus, Send, Square, Volume2 } from "lucide-react";
 import { ArchitectureToggle } from "@/components/architecture-toggle";
+import { CodeInspector } from "@/components/code-inspector";
 import { PipelineView } from "@/components/pipeline/pipeline-view";
+import { getCodeSnippet } from "@/config/code-snippets";
 import { voiceDefaults } from "@/config/models";
 import type { ArchitectureMode } from "@/types/pipeline";
 
-export type VoiceStage = "idle" | "listening" | "transcribing" | "thinking" | "speaking" | "error";
+export type VoiceStage = "idle" | "connecting" | "listening" | "transcribing" | "thinking" | "speaking" | "error";
 
 export interface ConversationMessage {
   role: "user" | "assistant";
@@ -21,6 +23,7 @@ interface Props {
 
 const stageCopy: Record<VoiceStage, string> = {
   idle: "Start a conversation when you're ready",
+  connecting: "Connecting to the realtime model…",
   listening: "Listening — speak naturally and pause when you're done",
   transcribing: "Transcribing your message…",
   thinking: "Preparing a response…",
@@ -49,6 +52,7 @@ export function VoiceConsole({ architecture, onArchitectureChange }: Props) {
   const [error, setError] = useState("");
   const [showTextInput, setShowTextInput] = useState(false);
   const [sessionActive, setSessionActive] = useState(false);
+  const [selectedStageId, setSelectedStageId] = useState<string>();
   const recorderRef = useRef<MediaRecorder | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const chunksRef = useRef<Blob[]>([]);
@@ -57,6 +61,9 @@ export function VoiceConsole({ architecture, onArchitectureChange }: Props) {
   const animationFrameRef = useRef<number | null>(null);
   const turnTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  const peerConnectionRef = useRef<RTCPeerConnection | null>(null);
+  const dataChannelRef = useRef<RTCDataChannel | null>(null);
+  const remoteAudioRef = useRef<HTMLAudioElement | null>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
   const sessionActiveRef = useRef(false);
   const shouldProcessRef = useRef(false);
@@ -76,6 +83,9 @@ export function VoiceConsole({ architecture, onArchitectureChange }: Props) {
       streamRef.current?.getTracks().forEach((track) => track.stop());
       void audioContextRef.current?.close();
       audioRef.current?.pause();
+      dataChannelRef.current?.close();
+      peerConnectionRef.current?.close();
+      remoteAudioRef.current?.pause();
       abortControllerRef.current?.abort();
     };
   }, []);
@@ -106,6 +116,15 @@ export function VoiceConsole({ architecture, onArchitectureChange }: Props) {
     void audioContextRef.current?.close();
     audioContextRef.current = null;
     analyserRef.current = null;
+    dataChannelRef.current?.close();
+    dataChannelRef.current = null;
+    peerConnectionRef.current?.close();
+    peerConnectionRef.current = null;
+    if (remoteAudioRef.current) {
+      remoteAudioRef.current.pause();
+      remoteAudioRef.current.srcObject = null;
+      remoteAudioRef.current = null;
+    }
   }
 
   function endConversation() {
@@ -116,6 +135,28 @@ export function VoiceConsole({ architecture, onArchitectureChange }: Props) {
     releaseSessionResources();
     setSessionActive(false);
     updateStage("idle");
+  }
+
+  function startNewConversation() {
+    endConversation();
+    setMessages([]);
+    setTimings({});
+    setError("");
+  }
+
+  function failSession(message: string) {
+    releaseSessionResources();
+    setSessionActive(false);
+    setError(message);
+    updateStage("error");
+  }
+
+  function handleArchitectureChange(nextArchitecture: ArchitectureMode) {
+    if (nextArchitecture === architecture) return;
+    endConversation();
+    setSelectedStageId(undefined);
+    setError("");
+    onArchitectureChange(nextArchitecture);
   }
 
   async function measured<T>(name: string, action: () => Promise<T>) {
@@ -287,7 +328,80 @@ export function VoiceConsole({ architecture, onArchitectureChange }: Props) {
     turnTimeoutRef.current = setTimeout(() => finishTurn(speechDetectedRef.current), voiceDefaults.maxRecordingMs);
   }
 
-  async function startConversation() {
+  function handleRealtimeEvent(messageEvent: MessageEvent<string>) {
+    let event: { type?: string; transcript?: string; error?: { message?: string } };
+    try {
+      event = JSON.parse(messageEvent.data) as typeof event;
+    } catch {
+      return;
+    }
+
+    if (event.type === "input_audio_buffer.speech_started") updateStage("listening");
+    if (event.type === "input_audio_buffer.speech_stopped" || event.type === "response.created") updateStage("thinking");
+    if (event.type === "response.output_audio.delta") updateStage("speaking");
+    if (event.type === "conversation.item.input_audio_transcription.completed" && event.transcript?.trim()) {
+      setMessages((current) => [...current, { role: "user", content: event.transcript!.trim() }]);
+    }
+    if (event.type === "response.output_audio_transcript.done" && event.transcript?.trim()) {
+      setMessages((current) => [...current, { role: "assistant", content: event.transcript!.trim() }]);
+    }
+    if (event.type === "response.output_audio.done" || event.type === "response.done") updateStage("listening");
+    if (event.type === "error") failSession(event.error?.message ?? "The realtime session stopped unexpectedly.");
+  }
+
+  async function startRealtimeConversation() {
+    if (!navigator.mediaDevices?.getUserMedia || typeof RTCPeerConnection === "undefined") {
+      setShowTextInput(true);
+      setError("This browser does not support a realtime voice connection.");
+      updateStage("error");
+      return;
+    }
+
+    updateStage("connecting");
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const peerConnection = new RTCPeerConnection();
+      const remoteAudio = new Audio();
+      remoteAudio.autoplay = true;
+      remoteAudioRef.current = remoteAudio;
+      streamRef.current = stream;
+      peerConnectionRef.current = peerConnection;
+      sessionActiveRef.current = true;
+      setSessionActive(true);
+
+      peerConnection.ontrack = (event) => {
+        remoteAudio.srcObject = event.streams[0];
+        void remoteAudio.play().catch(() => setError("Audio playback was blocked. Allow autoplay to hear the assistant."));
+      };
+      peerConnection.onconnectionstatechange = () => {
+        if (["failed", "disconnected"].includes(peerConnection.connectionState) && sessionActiveRef.current) {
+          failSession("The realtime connection was interrupted. Start a new conversation to reconnect.");
+        }
+      };
+      stream.getTracks().forEach((track) => peerConnection.addTrack(track, stream));
+
+      const dataChannel = peerConnection.createDataChannel("oai-events");
+      dataChannelRef.current = dataChannel;
+      dataChannel.addEventListener("message", handleRealtimeEvent);
+      dataChannel.addEventListener("open", () => {
+        updateStage("listening");
+      });
+
+      const offer = await peerConnection.createOffer();
+      await peerConnection.setLocalDescription(offer);
+      const response = await fetch("/api/realtime/session", {
+        method: "POST",
+        headers: { "Content-Type": "application/sdp" },
+        body: offer.sdp,
+      });
+      if (!response.ok) throw new Error(await readError(response));
+      await peerConnection.setRemoteDescription({ type: "answer", sdp: await response.text() });
+    } catch (caughtError) {
+      failSession(caughtError instanceof Error ? caughtError.message : "The realtime session could not be started.");
+    }
+  }
+
+  async function startCascadedConversation() {
     setError("");
     if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === "undefined") {
       setShowTextInput(true);
@@ -314,23 +428,47 @@ export function VoiceConsole({ architecture, onArchitectureChange }: Props) {
     }
   }
 
+  function startConversation() {
+    setError("");
+    if (architecture === "realtime") void startRealtimeConversation();
+    else void startCascadedConversation();
+  }
+
   function submitText(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const message = textInput.trim();
-    if (!message || !["idle", "error"].includes(stage)) return;
+    const realtimeChannel = dataChannelRef.current;
+    if (!message) return;
+    if (architecture === "realtime" && realtimeChannel?.readyState === "open") {
+      setTextInput("");
+      setMessages((current) => [...current, { role: "user", content: message }]);
+      updateStage("thinking");
+      realtimeChannel.send(JSON.stringify({
+        type: "conversation.item.create",
+        item: { type: "message", role: "user", content: [{ type: "input_text", text: message }] },
+      }));
+      realtimeChannel.send(JSON.stringify({ type: "response.create" }));
+      return;
+    }
+    if (!["idle", "error"].includes(stage)) return;
     setTextInput("");
     void generateResponse(message, false);
   }
 
-  const textBusy = !["idle", "error"].includes(stage);
+  const textBusy = architecture === "realtime" ? dataChannelRef.current?.readyState !== "open" : !["idle", "error"].includes(stage);
+  const selectedSnippet = selectedStageId ? getCodeSnippet(architecture, selectedStageId) : undefined;
 
   return (
+    <>
     <section aria-label="Voice agent workspace" className="grid overflow-hidden rounded-[1.75rem] border border-slate-200 bg-white shadow-[0_18px_50px_rgba(15,23,42,0.07)] lg:grid-cols-[minmax(0,1.08fr)_minmax(360px,0.92fr)]">
       <div className="order-2 flex min-h-[620px] flex-col p-5 sm:p-8 lg:order-1 lg:border-r lg:border-slate-200">
-        <div>
-          <p className="text-sm font-medium text-blue-700">Conversation</p>
-          <h2 className="mt-1 text-2xl font-semibold tracking-[-0.03em] text-slate-950">Speak naturally</h2>
-          <p className="mt-2 max-w-xl text-sm leading-6 text-slate-500">Start once, then talk normally. A short pause sends your turn, and the microphone resumes after each answer.</p>
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <p className="text-sm font-medium text-blue-700">Conversation</p>
+            <h2 className="mt-1 text-2xl font-semibold tracking-[-0.03em] text-slate-950">Speak naturally</h2>
+            <p className="mt-2 max-w-xl text-sm leading-6 text-slate-500">{architecture === "cascaded" ? "Start once, then talk normally. A short pause sends your turn, and the microphone resumes after each answer." : "Start once for a continuous, low-latency conversation over WebRTC."}</p>
+          </div>
+          <button type="button" onClick={startNewConversation} className="inline-flex shrink-0 items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-600 transition hover:border-slate-300 hover:text-slate-950"><Plus className="size-3.5" />New conversation</button>
         </div>
 
         <div className="mt-6 flex-1 overflow-y-auto rounded-2xl bg-slate-50 p-4 sm:p-5" aria-label="Conversation transcript">
@@ -369,11 +507,13 @@ export function VoiceConsole({ architecture, onArchitectureChange }: Props) {
       </div>
 
       <aside className="order-1 bg-slate-50/70 p-5 sm:p-8 lg:order-2" aria-label="Live architecture view">
-        <ArchitectureToggle value={architecture} onChange={onArchitectureChange} />
+        <ArchitectureToggle value={architecture} onChange={handleArchitectureChange} />
         <div className="mt-7 border-t border-slate-200 pt-6">
-          <PipelineView architecture={architecture} activeStage={stage} timings={timings} />
+          <PipelineView architecture={architecture} activeStage={stage} timings={timings} selectedStageId={selectedStageId} onStageSelect={setSelectedStageId} />
         </div>
       </aside>
     </section>
+    <CodeInspector snippet={selectedSnippet} onClose={() => setSelectedStageId(undefined)} />
+    </>
   );
 }

@@ -7,7 +7,7 @@ interface Props { value: ArchitectureMode; onChange: (value: ArchitectureMode) =
 
 const options = [
   { value: "cascaded" as const, label: "Cascaded", description: "The live demo", icon: Layers3 },
-  { value: "realtime" as const, label: "Speech-to-speech", description: "Architecture preview", icon: Radio },
+  { value: "realtime" as const, label: "Speech-to-speech", description: "Live WebRTC", icon: Radio },
 ];
 
 export function ArchitectureToggle({ value, onChange }: Props) {

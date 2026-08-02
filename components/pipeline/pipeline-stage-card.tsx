@@ -6,12 +6,10 @@ interface Props { stage: PipelineStageDefinition; index: number; active?: boolea
 export function PipelineStageCard({ stage, index, active = false, latency }: Props) {
   const Icon = stage.icon;
   return (
-    <motion.article data-testid="pipeline-stage" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.24, delay: index * 0.04 }} className={`flex min-h-36 min-w-0 flex-1 flex-col rounded-2xl border p-4 transition ${active ? "border-blue-400 bg-blue-50 shadow-[0_10px_30px_rgba(37,99,235,0.12)]" : "border-slate-200 bg-slate-50/70"}`}>
-      <div className="flex items-center justify-between gap-3">
-        <span className={`grid size-9 place-items-center rounded-lg ${active ? "bg-blue-600 text-white" : "bg-white text-slate-500 shadow-sm ring-1 ring-slate-200"}`}><Icon className="size-4" aria-hidden="true" /></span>
-        <span className={`text-xs font-medium ${active ? "text-blue-700" : "text-slate-400"}`}>{active ? "Working" : latency ? `${latency} ms` : "Ready"}</span>
-      </div>
-      <div className="mt-5"><p className="text-xs font-semibold text-blue-700">{stage.shortLabel}</p><h3 className="mt-1 text-sm font-semibold text-slate-950">{stage.label}</h3><p className="mt-1.5 text-xs leading-5 text-slate-500">{stage.description}</p></div>
+    <motion.article data-testid="pipeline-stage" initial={{ opacity: 0, x: 6 }} animate={{ opacity: 1, x: 0 }} transition={{ duration: 0.2, delay: index * 0.035 }} className={`flex min-w-0 items-center gap-3 rounded-xl border px-3 py-3 transition ${active ? "border-blue-400 bg-blue-50 shadow-[0_8px_24px_rgba(37,99,235,0.1)]" : "border-slate-200 bg-white"}`}>
+      <span className={`grid size-9 shrink-0 place-items-center rounded-lg ${active ? "bg-blue-600 text-white" : "bg-slate-100 text-slate-500"}`}><Icon className="size-4" aria-hidden="true" /></span>
+      <div className="min-w-0 flex-1"><p className={`text-xs font-semibold ${active ? "text-blue-700" : "text-slate-500"}`}>{stage.shortLabel}</p><h3 className="truncate text-sm font-semibold text-slate-950">{stage.label}</h3></div>
+      <span className={`shrink-0 text-xs font-medium ${active ? "text-blue-700" : "text-slate-400"}`}>{active ? "Active" : latency ? `${latency} ms` : "Ready"}</span>
     </motion.article>
   );
 }

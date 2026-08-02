@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Inside the Voice Agent",
+  title: "Voice Agent Demo",
   description:
     "Talk to a live AI voice agent and see how speech becomes an answer.",
 };

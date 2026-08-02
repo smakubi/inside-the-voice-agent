@@ -12,11 +12,3 @@ export interface PipelineStageDefinition {
   status: StageStatus;
   icon: LucideIcon;
 }
-
-export interface Scenario {
-  id: string;
-  name: string;
-  description: string;
-  suggestedPrompt: string;
-  teachingNotes: string[];
-}

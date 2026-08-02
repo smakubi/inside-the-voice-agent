@@ -13,11 +13,10 @@ describe("AppShell", () => {
     expect(screen.getAllByTestId("pipeline-stage")).toHaveLength(3);
   });
 
-  it("updates the conversation context", async () => {
-    const user = userEvent.setup();
+  it("keeps the pipeline beside the conversation workspace", () => {
     render(<AppShell />);
-    await user.selectOptions(screen.getByLabelText("Conversation context"), "language-tutoring");
-    expect(screen.getByLabelText("Conversation context")).toHaveValue("language-tutoring");
+    expect(screen.getByRole("complementary", { name: "Live architecture view" })).toBeInTheDocument();
+    expect(screen.queryByText("Conversation context")).not.toBeInTheDocument();
   });
 
   it("reveals the text fallback", async () => {
@@ -29,7 +28,7 @@ describe("AppShell", () => {
 
   it("makes the live recording action prominent", () => {
     render(<AppShell />);
-    expect(screen.getByRole("button", { name: "Start recording" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Start conversation" })).toBeInTheDocument();
     expect(screen.getByText(/AI-generated/)).toBeInTheDocument();
   });
 });

@@ -13,7 +13,7 @@ const options = [
 export function ArchitectureToggle({ value, onChange }: Props) {
   return (
     <fieldset>
-      <legend className="mb-3 text-sm font-semibold text-slate-900">How should we look inside?</legend>
+      <legend className="mb-3 text-sm font-semibold text-slate-900">Architecture</legend>
       <div className="grid grid-cols-2 gap-2" role="radiogroup" aria-label="Voice architecture">
         {options.map((option) => {
           const active = value === option.value;

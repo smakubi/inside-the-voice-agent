@@ -8,6 +8,7 @@ export interface PipelineStageDefinition {
   label: string;
   shortLabel: string;
   description: string;
+  technology: string;
   placeholderLatency: string;
   status: StageStatus;
   icon: LucideIcon;

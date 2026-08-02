@@ -2,6 +2,7 @@ export const voiceModels = {
   transcription: "gpt-transcribe",
   response: "gpt-5.6-luna",
   speech: "gpt-4o-mini-tts",
+  realtimeReference: "gpt-realtime-1.5",
 } as const;
 
 export const voiceDefaults = {

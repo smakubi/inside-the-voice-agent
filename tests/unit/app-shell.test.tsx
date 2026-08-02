@@ -8,8 +8,13 @@ describe("AppShell", () => {
     const user = userEvent.setup();
     render(<AppShell />);
     expect(screen.getAllByTestId("pipeline-stage")).toHaveLength(5);
+    expect(screen.getByText(/gpt-transcribe/)).toBeInTheDocument();
+    expect(screen.getByText(/gpt-5.6-luna/)).toBeInTheDocument();
+    expect(screen.getByText(/gpt-4o-mini-tts/)).toBeInTheDocument();
     await user.click(screen.getByRole("radio", { name: /Speech-to-speech/ }));
     expect(await screen.findByText("Realtime Model")).toBeInTheDocument();
+    expect(screen.getByText(/gpt-realtime-1.5/)).toBeInTheDocument();
+    expect(screen.getByText("Reference only")).toBeInTheDocument();
     expect(screen.getAllByTestId("pipeline-stage")).toHaveLength(3);
   });
 

@@ -5,6 +5,9 @@ export const metadata: Metadata = {
   title: "Voice Agent Demo",
   description:
     "Talk to a live AI voice agent and see how speech becomes an answer.",
+  icons: {
+    icon: "/icon.svg",
+  },
 };
 
 export default function RootLayout({

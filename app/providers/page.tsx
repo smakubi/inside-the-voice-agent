@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { ArrowUpRight, Boxes, Radio, Route, Sparkles } from "lucide-react";
+import { ArrowUpRight, Boxes, Radio, Route } from "lucide-react";
 import { SiteHeader } from "@/components/site-header";
 
 export const metadata: Metadata = {
@@ -71,9 +71,26 @@ export default function ProvidersPage() {
         <section className="mt-12"><div className="max-w-2xl"><p className="text-sm font-semibold text-blue-700">Audio in, audio out</p><h2 className="mt-2 text-3xl font-semibold tracking-[-0.035em] text-slate-950">Native speech-to-speech providers</h2></div><div className="mt-6 grid gap-4 md:grid-cols-2">{nativeProviders.map((provider) => <ProviderCard key={provider.product} provider={provider} />)}</div></section>
         <section className="mt-14"><div className="max-w-2xl"><p className="text-sm font-semibold text-blue-700">Optimized orchestration</p><h2 className="mt-2 text-3xl font-semibold tracking-[-0.035em] text-slate-950">Cascaded and hybrid platforms</h2></div><div className="mt-6 grid gap-4 md:grid-cols-2">{cascadedProviders.map((provider) => <ProviderCard key={provider.product} provider={provider} />)}</div></section>
 
-        <section className="mt-14 rounded-3xl bg-slate-950 p-6 text-white sm:p-8">
-          <div className="flex items-center gap-3"><Sparkles className="size-5 text-blue-300" /><h2 className="text-2xl font-semibold tracking-[-0.03em]">Recent developments</h2></div>
-          <div className="mt-6 grid gap-px overflow-hidden rounded-2xl bg-slate-700 sm:grid-cols-2">{developments.map((item) => <a key={item.title} href={item.href} target="_blank" rel="noreferrer" className="bg-slate-900 p-5 transition hover:bg-slate-800"><p className="text-xs font-semibold uppercase tracking-[0.12em] text-blue-300">{item.date}</p><h3 className="mt-2 font-semibold">{item.title}</h3><p className="mt-2 text-sm leading-6 text-slate-300">{item.detail}</p></a>)}</div>
+        <section className="mt-16 border-y border-slate-200 py-10">
+          <div className="grid gap-3 sm:grid-cols-[9rem_1fr]">
+            <p className="text-sm font-medium text-slate-500">Industry updates</p>
+            <div>
+              <h2 className="text-2xl font-semibold tracking-[-0.03em] text-slate-950">Recent developments</h2>
+              <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-600">Notable releases and platform changes across native voice models.</p>
+            </div>
+          </div>
+          <div className="mt-8 border-t border-slate-200">
+            {developments.map((item) => (
+              <a key={item.title} href={item.href} target="_blank" rel="noreferrer" className="group grid gap-2 border-b border-slate-200 py-5 sm:grid-cols-[9rem_1fr_auto] sm:gap-6">
+                <p className="text-sm tabular-nums text-slate-500">{item.date}</p>
+                <div>
+                  <h3 className="font-semibold text-slate-950 group-hover:text-blue-700">{item.title}</h3>
+                  <p className="mt-1 text-sm leading-6 text-slate-600">{item.detail}</p>
+                </div>
+                <ArrowUpRight className="mt-0.5 size-4 text-slate-400 transition group-hover:text-blue-700" aria-hidden="true" />
+              </a>
+            ))}
+          </div>
         </section>
 
         <section className="my-14 grid gap-4 md:grid-cols-2"><div className="rounded-2xl border border-slate-200 bg-white p-6"><h2 className="text-lg font-semibold text-slate-950">Choose native when</h2><p className="mt-3 text-sm leading-6 text-slate-600">Conversational timing, vocal nuance, interruptions, and the most fluid user experience matter more than swapping individual providers.</p></div><div className="rounded-2xl border border-slate-200 bg-white p-6"><h2 className="text-lg font-semibold text-slate-950">Choose cascaded when</h2><p className="mt-3 text-sm leading-6 text-slate-600">You need exact transcripts, deterministic spoken wording, independent provider selection, detailed latency traces, or compliance review.</p></div></section>

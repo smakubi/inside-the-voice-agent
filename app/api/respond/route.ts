@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { generateText } from "ai";
 import { z } from "zod";
 import { voiceModels } from "@/config/models";
 import { getBaseten } from "@/lib/baseten";
@@ -17,33 +18,27 @@ const requestSchema = z.object({
 export async function POST(request: Request) {
   try {
     const body = requestSchema.parse(await request.json());
-    const response = await getBaseten().chat.completions.create({
-      model: voiceModels.response,
+    const { text } = await generateText({
+      model: getBaseten().chat(voiceModels.response),
+      instructions: [
+        "You are a warm, practical voice assistant in a live spoken conversation.",
+        "Answer directly in one to three short sentences unless the user asks for detail.",
+        "Use natural spoken language. Do not use markdown, headings, or lists.",
+      ].join("\n"),
       messages: [
-        {
-          role: "system",
-          content: [
-            "You are a warm, practical voice assistant in a live spoken conversation.",
-            "Answer directly in one to three short sentences unless the user asks for detail.",
-            "Use natural spoken language. Do not use markdown, headings, or lists.",
-          ].join("\n"),
-        },
         ...body.history,
         { role: "user" as const, content: body.text },
       ],
       temperature: 0.7,
-      top_p: 1,
-      max_tokens: 220,
-      presence_penalty: 0,
-      frequency_penalty: 0,
+      maxOutputTokens: 220,
     });
 
-    const text = response.choices[0]?.message.content?.trim();
-    if (!text) {
+    const answer = text.trim();
+    if (!answer) {
       throw new Error("The model returned an empty response");
     }
 
-    return NextResponse.json({ text });
+    return NextResponse.json({ text: answer });
   } catch (error) {
     if (error instanceof z.ZodError) {
       return NextResponse.json({ error: "That message could not be processed." }, { status: 400 });

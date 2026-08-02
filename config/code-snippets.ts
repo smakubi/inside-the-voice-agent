@@ -45,7 +45,7 @@ print(transcript.text)`,
   "cascaded:language-model": {
     title: "Generate the answer",
     technology: "Baseten · thinkingmachines/inkling-small",
-    note: "Baseten exposes Inkling through an OpenAI-compatible endpoint. This demo uses a non-streaming response because the next stage needs the complete text for speech synthesis.",
+    note: "The TypeScript demo uses Vercel AI SDK generateText with Baseten's OpenAI-compatible chat endpoint. This Python example is the equivalent learner implementation.",
     code: `import os
 from openai import OpenAI
 

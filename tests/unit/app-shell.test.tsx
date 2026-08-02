@@ -79,6 +79,7 @@ describe("AppShell", () => {
       { role: "user", content: "My name is Ada" },
       { role: "assistant", content: "Answer 1" },
     ]);
+    expect(screen.getAllByText(/\d+ ms/).length).toBeGreaterThanOrEqual(3);
   });
 
   it("makes the live recording action prominent", () => {

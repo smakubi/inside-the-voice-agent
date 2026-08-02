@@ -106,8 +106,8 @@ stream.start()`,
   },
   "realtime:realtime-model": {
     title: "Run speech-to-speech",
-    technology: "OpenAI · gpt-realtime-1.5",
-    note: "The browser demo uses WebRTC. This Python teaching equivalent connects over a Realtime WebSocket.",
+    technology: "OpenAI · gpt-realtime-1.5 + web search",
+    note: "The browser demo uses WebRTC and exposes a web_search function. This Python teaching equivalent shows the same tool configuration over a Realtime WebSocket.",
     code: `import json
 import os
 from websocket import create_connection
@@ -125,6 +125,17 @@ ws.send(json.dumps({
         "model": "gpt-realtime-1.5",
         "output_modalities": ["audio"],
         "audio": {"output": {"voice": "marin"}},
+        "tools": [{
+            "type": "function",
+            "name": "web_search",
+            "description": "Search the live web for current facts.",
+            "parameters": {
+                "type": "object",
+                "properties": {"query": {"type": "string"}},
+                "required": ["query"],
+            },
+        }],
+        "tool_choice": "auto",
     },
 }))`,
   },

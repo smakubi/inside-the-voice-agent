@@ -16,6 +16,20 @@ export interface ConversationMessage {
   content: string;
 }
 
+interface RealtimeFunctionCall {
+  type: "function_call";
+  name: string;
+  call_id: string;
+  arguments: string;
+}
+
+interface RealtimeServerEvent {
+  type?: string;
+  transcript?: string;
+  error?: { message?: string };
+  response?: { output?: RealtimeFunctionCall[] };
+}
+
 interface Props {
   architecture: ArchitectureMode;
   onArchitectureChange: (architecture: ArchitectureMode) => void;
@@ -65,6 +79,10 @@ export function VoiceConsole({ architecture, onArchitectureChange }: Props) {
   const peerConnectionRef = useRef<RTCPeerConnection | null>(null);
   const dataChannelRef = useRef<RTCDataChannel | null>(null);
   const remoteAudioRef = useRef<HTMLAudioElement | null>(null);
+  const recordingStartedAtRef = useRef<number | null>(null);
+  const realtimeSpeechStartedAtRef = useRef<number | null>(null);
+  const realtimeResponseStartedAtRef = useRef<number | null>(null);
+  const realtimeAudioStartedAtRef = useRef<number | null>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
   const sessionActiveRef = useRef(false);
   const shouldProcessRef = useRef(false);
@@ -125,6 +143,10 @@ export function VoiceConsole({ architecture, onArchitectureChange }: Props) {
     void audioContextRef.current?.close();
     audioContextRef.current = null;
     analyserRef.current = null;
+    recordingStartedAtRef.current = null;
+    realtimeSpeechStartedAtRef.current = null;
+    realtimeResponseStartedAtRef.current = null;
+    realtimeAudioStartedAtRef.current = null;
     dataChannelRef.current?.close();
     dataChannelRef.current = null;
     peerConnectionRef.current?.close();
@@ -227,7 +249,12 @@ export function VoiceConsole({ architecture, onArchitectureChange }: Props) {
       const audioUrl = URL.createObjectURL(await speechResponse.blob());
       const audio = new Audio(audioUrl);
       audioRef.current = audio;
+      const playbackStartedAt = performance.now();
+      let playbackFinished = false;
       const finishPlayback = () => {
+        if (playbackFinished) return;
+        playbackFinished = true;
+        setTimings((current) => ({ ...current, "assistant-audio": Math.round(performance.now() - playbackStartedAt) }));
         URL.revokeObjectURL(audioUrl);
         audioRef.current = null;
         if (continuous) resumeListening();
@@ -282,6 +309,10 @@ export function VoiceConsole({ architecture, onArchitectureChange }: Props) {
 
   function finishTurn(shouldProcess: boolean) {
     clearTurnMonitoring();
+    if (shouldProcess && recordingStartedAtRef.current !== null) {
+      setTimings((current) => ({ ...current, "user-audio": Math.round(performance.now() - recordingStartedAtRef.current!) }));
+    }
+    recordingStartedAtRef.current = null;
     shouldProcessRef.current = shouldProcess;
     if (recorderRef.current?.state === "recording") recorderRef.current.stop();
   }
@@ -322,6 +353,7 @@ export function VoiceConsole({ architecture, onArchitectureChange }: Props) {
     const mimeType = supportedMimeType();
     const recorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
     recorderRef.current = recorder;
+    recordingStartedAtRef.current = performance.now();
     recorder.ondataavailable = (event) => {
       if (event.data.size) chunksRef.current.push(event.data);
     };
@@ -338,24 +370,89 @@ export function VoiceConsole({ architecture, onArchitectureChange }: Props) {
     turnTimeoutRef.current = setTimeout(() => finishTurn(speechDetectedRef.current), voiceDefaults.maxRecordingMs);
   }
 
+  async function runRealtimeWebSearch(functionCall: RealtimeFunctionCall) {
+    const dataChannel = dataChannelRef.current;
+    if (!dataChannel || dataChannel.readyState !== "open") return;
+
+    let output: string;
+    try {
+      const { query } = JSON.parse(functionCall.arguments) as { query?: string };
+      if (!query?.trim()) throw new Error("The model did not provide a search query.");
+      const response = await fetch("/api/search", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ query }),
+      });
+      if (!response.ok) throw new Error(await readError(response));
+      const body = (await response.json()) as { result: string };
+      output = body.result;
+    } catch (caughtError) {
+      output = caughtError instanceof Error ? `Web search failed: ${caughtError.message}` : "Web search failed.";
+    }
+
+    if (dataChannel.readyState !== "open") return;
+    dataChannel.send(JSON.stringify({
+      type: "conversation.item.create",
+      item: { type: "function_call_output", call_id: functionCall.call_id, output },
+    }));
+    dataChannel.send(JSON.stringify({ type: "response.create" }));
+  }
+
+  function finishRealtimeAudio() {
+    if (realtimeAudioStartedAtRef.current !== null) {
+      setTimings((current) => ({ ...current, "assistant-audio": Math.round(performance.now() - realtimeAudioStartedAtRef.current!) }));
+      realtimeAudioStartedAtRef.current = null;
+    }
+    realtimeResponseStartedAtRef.current = null;
+    updateStage("listening");
+  }
+
   function handleRealtimeEvent(messageEvent: MessageEvent<string>) {
-    let event: { type?: string; transcript?: string; error?: { message?: string } };
+    let event: RealtimeServerEvent;
     try {
       event = JSON.parse(messageEvent.data) as typeof event;
     } catch {
       return;
     }
 
-    if (event.type === "input_audio_buffer.speech_started") updateStage("listening");
-    if (event.type === "input_audio_buffer.speech_stopped" || event.type === "response.created") updateStage("thinking");
-    if (event.type === "response.output_audio.delta") updateStage("speaking");
+    if (event.type === "input_audio_buffer.speech_started") {
+      realtimeSpeechStartedAtRef.current = performance.now();
+      updateStage("listening");
+    }
+    if (event.type === "input_audio_buffer.speech_stopped") {
+      if (realtimeSpeechStartedAtRef.current !== null) {
+        setTimings((current) => ({ ...current, "user-audio": Math.round(performance.now() - realtimeSpeechStartedAtRef.current!) }));
+      }
+      realtimeSpeechStartedAtRef.current = null;
+      realtimeResponseStartedAtRef.current = performance.now();
+      updateStage("thinking");
+    }
+    if (event.type === "response.created") updateStage("thinking");
+    if (event.type === "response.output_audio.delta") {
+      if (realtimeAudioStartedAtRef.current === null) {
+        realtimeAudioStartedAtRef.current = performance.now();
+        if (realtimeResponseStartedAtRef.current !== null) {
+          setTimings((current) => ({ ...current, "realtime-model": Math.round(performance.now() - realtimeResponseStartedAtRef.current!) }));
+        }
+      }
+      updateStage("speaking");
+    }
     if (event.type === "conversation.item.input_audio_transcription.completed" && event.transcript?.trim()) {
       appendMessage({ role: "user", content: event.transcript.trim() });
     }
     if (event.type === "response.output_audio_transcript.done" && event.transcript?.trim()) {
       appendMessage({ role: "assistant", content: event.transcript.trim() });
     }
-    if (event.type === "response.output_audio.done" || event.type === "response.done") updateStage("listening");
+    if (event.type === "response.output_audio.done") finishRealtimeAudio();
+    if (event.type === "response.done") {
+      const functionCall = event.response?.output?.find((item) => item.type === "function_call" && item.name === "web_search");
+      if (functionCall) {
+        updateStage("thinking");
+        void runRealtimeWebSearch(functionCall);
+      } else if (realtimeAudioStartedAtRef.current === null) {
+        updateStage("listening");
+      }
+    }
     if (event.type === "error") failSession(event.error?.message ?? "The realtime session stopped unexpectedly.");
   }
 
@@ -452,6 +549,7 @@ export function VoiceConsole({ architecture, onArchitectureChange }: Props) {
     if (architecture === "realtime" && realtimeChannel?.readyState === "open") {
       setTextInput("");
       appendMessage({ role: "user", content: message });
+      realtimeResponseStartedAtRef.current = performance.now();
       updateStage("thinking");
       realtimeChannel.send(JSON.stringify({
         type: "conversation.item.create",

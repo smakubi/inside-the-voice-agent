@@ -12,6 +12,6 @@ export const cascadedStages: PipelineStageDefinition[] = [
 
 export const realtimeStages: PipelineStageDefinition[] = [
   { id: "user-audio", label: "User Audio", shortLabel: "Listen", description: "Voice enters as a live microphone track.", technology: "WebRTC microphone", placeholderLatency: "— ms", status: "ready", icon: AudioLines },
-  { id: "realtime-model", label: "Realtime Model", shortLabel: "Listen · Reason · Speak", description: "One multimodal model works directly with audio in and audio out.", technology: `OpenAI · ${voiceModels.realtime}`, placeholderLatency: "— ms", status: "idle", icon: Radio },
+  { id: "realtime-model", label: "Realtime Model", shortLabel: "Listen · Reason · Speak", description: "One multimodal model works directly with audio in and audio out.", technology: `OpenAI · ${voiceModels.realtime} + web search`, placeholderLatency: "— ms", status: "idle", icon: Radio },
   { id: "assistant-audio", label: "Assistant Audio", shortLabel: "Respond", description: "Voice returns over the same live connection.", technology: "WebRTC audio stream", placeholderLatency: "— ms", status: "idle", icon: Speech },
 ];

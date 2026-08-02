@@ -15,7 +15,13 @@ export async function POST(request: Request) {
   const session = {
     type: "realtime",
     model: voiceModels.realtime,
-    instructions: "You are a warm, practical voice assistant. Reply naturally and concisely.",
+    instructions: [
+      `Today is ${new Date().toISOString().slice(0, 10)}.`,
+      "You are a warm, practical voice assistant. Reply naturally and concisely.",
+      "You have a web_search function that searches the live web.",
+      "You MUST use web_search before answering questions about current or recent facts, news, politics, public officeholders, schedules, prices, weather, or anything likely to have changed.",
+      "When web search is used, answer from its result and briefly name the source and date when useful.",
+    ].join("\n"),
     output_modalities: ["audio"],
     audio: {
       input: {
@@ -24,6 +30,21 @@ export async function POST(request: Request) {
       },
       output: { voice: "marin" },
     },
+    tools: [
+      {
+        type: "function",
+        name: "web_search",
+        description: "Search the live web for current, recent, or time-sensitive factual information.",
+        parameters: {
+          type: "object",
+          properties: {
+            query: { type: "string", description: "A focused search query containing the facts that must be verified." },
+          },
+          required: ["query"],
+        },
+      },
+    ],
+    tool_choice: "auto",
   };
   const formData = new FormData();
   formData.set("sdp", sdp);

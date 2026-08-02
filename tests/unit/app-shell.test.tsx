@@ -15,7 +15,7 @@ describe("AppShell", () => {
     expect(screen.getByText(/gpt-4o-mini-tts/)).toBeInTheDocument();
     await user.click(screen.getByRole("radio", { name: /Speech-to-speech/ }));
     expect(await screen.findByText("Realtime Model")).toBeInTheDocument();
-    expect(screen.getByText(/gpt-realtime-1.5/)).toBeInTheDocument();
+    expect(screen.getByText(/gpt-realtime-2.1/)).toBeInTheDocument();
     expect(screen.getByText("Live stack")).toBeInTheDocument();
     expect(screen.getAllByTestId("pipeline-stage")).toHaveLength(3);
   });

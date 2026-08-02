@@ -8,4 +8,8 @@ test("voice interface supports its core exploration flow", async ({ page }) => {
   await expect(page.getByTestId("pipeline-stage")).toHaveCount(3);
   await page.getByRole("button", { name: "Prefer to type?" }).click();
   await expect(page.getByLabel("Message the voice agent")).toBeVisible();
+  await page.getByRole("link", { name: "Providers" }).click();
+  await expect(page.getByRole("heading", { name: "Voice AI provider landscape" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Native speech-to-speech providers" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Cascaded and hybrid platforms" })).toBeVisible();
 });

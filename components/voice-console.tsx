@@ -25,6 +25,7 @@ interface RealtimeFunctionCall {
 
 interface RealtimeServerEvent {
   type?: string;
+  delta?: string;
   transcript?: string;
   error?: { message?: string };
   response?: { output?: RealtimeFunctionCall[] };
@@ -399,12 +400,27 @@ export function VoiceConsole({ architecture, onArchitectureChange }: Props) {
   }
 
   function finishRealtimeAudio() {
+    const now = performance.now();
+    if (realtimeResponseStartedAtRef.current !== null && realtimeAudioStartedAtRef.current === null) {
+      setTimings((current) => ({ ...current, "realtime-model": Math.round(now - realtimeResponseStartedAtRef.current!) }));
+      realtimeAudioStartedAtRef.current = now;
+    }
     if (realtimeAudioStartedAtRef.current !== null) {
-      setTimings((current) => ({ ...current, "assistant-audio": Math.round(performance.now() - realtimeAudioStartedAtRef.current!) }));
+      setTimings((current) => ({ ...current, "assistant-audio": Math.max(1, Math.round(now - realtimeAudioStartedAtRef.current!)) }));
       realtimeAudioStartedAtRef.current = null;
     }
     realtimeResponseStartedAtRef.current = null;
     updateStage("listening");
+  }
+
+  function markRealtimeAudioStarted() {
+    if (realtimeAudioStartedAtRef.current !== null) return;
+    const now = performance.now();
+    realtimeAudioStartedAtRef.current = now;
+    if (realtimeResponseStartedAtRef.current !== null) {
+      setTimings((current) => ({ ...current, "realtime-model": Math.round(now - realtimeResponseStartedAtRef.current!) }));
+    }
+    updateStage("speaking");
   }
 
   function handleRealtimeEvent(messageEvent: MessageEvent<string>) {
@@ -425,23 +441,17 @@ export function VoiceConsole({ architecture, onArchitectureChange }: Props) {
       }
       realtimeSpeechStartedAtRef.current = null;
       realtimeResponseStartedAtRef.current = performance.now();
+      realtimeAudioStartedAtRef.current = null;
       updateStage("thinking");
     }
     if (event.type === "response.created") updateStage("thinking");
-    if (event.type === "response.output_audio.delta") {
-      if (realtimeAudioStartedAtRef.current === null) {
-        realtimeAudioStartedAtRef.current = performance.now();
-        if (realtimeResponseStartedAtRef.current !== null) {
-          setTimings((current) => ({ ...current, "realtime-model": Math.round(performance.now() - realtimeResponseStartedAtRef.current!) }));
-        }
-      }
-      updateStage("speaking");
-    }
+    if (event.type === "response.output_audio.delta" || event.type === "response.output_audio_transcript.delta") markRealtimeAudioStarted();
     if (event.type === "conversation.item.input_audio_transcription.completed" && event.transcript?.trim()) {
       appendMessage({ role: "user", content: event.transcript.trim() });
     }
-    if (event.type === "response.output_audio_transcript.done" && event.transcript?.trim()) {
-      appendMessage({ role: "assistant", content: event.transcript.trim() });
+    if (event.type === "response.output_audio_transcript.done") {
+      if (event.transcript?.trim()) appendMessage({ role: "assistant", content: event.transcript.trim() });
+      finishRealtimeAudio();
     }
     if (event.type === "response.output_audio.done") finishRealtimeAudio();
     if (event.type === "response.done") {
@@ -449,9 +459,7 @@ export function VoiceConsole({ architecture, onArchitectureChange }: Props) {
       if (functionCall) {
         updateStage("thinking");
         void runRealtimeWebSearch(functionCall);
-      } else if (realtimeAudioStartedAtRef.current === null) {
-        updateStage("listening");
-      }
+      } else finishRealtimeAudio();
     }
     if (event.type === "error") failSession(event.error?.message ?? "The realtime session stopped unexpectedly.");
   }
@@ -470,6 +478,7 @@ export function VoiceConsole({ architecture, onArchitectureChange }: Props) {
       const peerConnection = new RTCPeerConnection();
       const remoteAudio = new Audio();
       remoteAudio.autoplay = true;
+      remoteAudio.onplaying = markRealtimeAudioStarted;
       remoteAudioRef.current = remoteAudio;
       streamRef.current = stream;
       peerConnectionRef.current = peerConnection;

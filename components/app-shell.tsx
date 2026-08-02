@@ -1,8 +1,9 @@
 "use client";
 
 import { useState } from "react";
-import { AudioWaveform, CheckCircle2, ChevronDown } from "lucide-react";
+import { CheckCircle2, ChevronDown } from "lucide-react";
 import { VoiceConsole } from "@/components/voice-console";
+import { SiteHeader } from "@/components/site-header";
 import type { ArchitectureMode } from "@/types/pipeline";
 
 export function AppShell() {
@@ -11,13 +12,7 @@ export function AppShell() {
   return (
     <main className="min-h-screen px-4 py-5 sm:px-6 lg:py-8">
       <div className="mx-auto max-w-6xl">
-        <header className="flex items-center justify-between py-2">
-          <div className="flex items-center gap-3">
-            <span className="grid size-10 place-items-center rounded-xl bg-blue-600 text-white"><AudioWaveform className="size-5" aria-hidden="true" /></span>
-            <span className="font-semibold tracking-[-0.02em] text-slate-950">Inside the Voice Agent</span>
-          </div>
-          <span className="hidden items-center gap-2 text-sm text-slate-500 sm:flex"><span className="size-2 rounded-full bg-emerald-500" />Voice service ready</span>
-        </header>
+        <SiteHeader showStatus />
 
         <section className="pb-9 pt-12 sm:pb-10 sm:pt-16">
           <h1 className="text-4xl font-semibold tracking-[-0.045em] text-slate-950 sm:text-5xl">Voice Agent Demo</h1>

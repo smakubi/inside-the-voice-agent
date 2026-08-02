@@ -3,7 +3,7 @@ export const voiceModels = {
   response: "thinkingmachines/inkling-small",
   webSearch: "gpt-5.6-luna",
   speech: "gpt-4o-mini-tts",
-  realtime: "gpt-realtime-1.5",
+  realtime: "gpt-realtime-2.1",
 } as const;
 
 export const voiceDefaults = {

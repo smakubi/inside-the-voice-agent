@@ -8,36 +8,28 @@ describe("AppShell", () => {
     const user = userEvent.setup();
     render(<AppShell />);
     expect(screen.getAllByTestId("pipeline-stage")).toHaveLength(5);
-    await user.click(screen.getByRole("radio", { name: "Speech-to-Speech" }));
+    await user.click(screen.getByRole("radio", { name: /Speech-to-speech/ }));
     expect(await screen.findByText("Realtime Model")).toBeInTheDocument();
     expect(screen.getAllByTestId("pipeline-stage")).toHaveLength(3);
   });
 
-  it("updates the teaching prompt when a scenario is selected", async () => {
+  it("updates the conversation context", async () => {
     const user = userEvent.setup();
     render(<AppShell />);
-    await user.selectOptions(screen.getByLabelText("Choose a demonstration scenario"), "language-tutoring");
-    expect(screen.getByText(/ordering coffee in Spanish/i)).toBeInTheDocument();
+    await user.selectOptions(screen.getByLabelText("Conversation context"), "language-tutoring");
+    expect(screen.getByLabelText("Conversation context")).toHaveValue("language-tutoring");
   });
 
-  it("opens and closes the inspector", async () => {
+  it("reveals the text fallback", async () => {
     const user = userEvent.setup();
     render(<AppShell />);
-    await user.click(screen.getByRole("switch", { name: "Inspector" }));
-    expect(screen.getByRole("complementary", { name: "Run inspector" })).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "Close inspector" }));
-    expect(screen.queryByRole("complementary", { name: "Run inspector" })).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Prefer to type?" }));
+    expect(screen.getByLabelText("Message the voice agent")).toBeInTheDocument();
   });
 
-  it("toggles lecture and developer modes without simulating a run", async () => {
-    const user = userEvent.setup();
+  it("makes the live recording action prominent", () => {
     render(<AppShell />);
-    const lecture = screen.getByRole("switch", { name: "Lecture Mode" });
-    await user.click(lecture);
-    expect(lecture).toHaveAttribute("aria-checked", "true");
-    await user.click(screen.getByRole("switch", { name: "Developer Mode" }));
-    expect(screen.getByRole("region", { name: "Developer event log" })).toHaveTextContent("No events yet");
-    await user.click(screen.getByRole("button", { name: "Start Demo" }));
-    expect(screen.getByText(/Static preview only/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Start recording" })).toBeInTheDocument();
+    expect(screen.getByText(/AI-generated/)).toBeInTheDocument();
   });
 });

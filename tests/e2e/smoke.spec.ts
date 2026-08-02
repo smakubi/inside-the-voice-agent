@@ -1,11 +1,11 @@
 import { expect, test } from "@playwright/test";
 
-test("teaching interface supports the core static flow", async ({ page }) => {
+test("voice interface supports its core exploration flow", async ({ page }) => {
   await page.goto("/");
-  await expect(page.getByRole("heading", { name: "Inside the Voice Agent" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "A voice agent you can actually talk to." })).toBeVisible();
   await expect(page.getByTestId("pipeline-stage")).toHaveCount(5);
-  await page.getByRole("radio", { name: "Speech-to-Speech" }).click();
+  await page.getByRole("radio", { name: /Speech-to-speech/ }).click();
   await expect(page.getByTestId("pipeline-stage")).toHaveCount(3);
-  await page.getByRole("switch", { name: "Inspector" }).click();
-  await expect(page.getByRole("complementary", { name: "Run inspector" })).toBeVisible();
+  await page.getByRole("button", { name: "Prefer to type?" }).click();
+  await expect(page.getByLabel("Message the voice agent")).toBeVisible();
 });

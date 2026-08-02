@@ -1,45 +1,63 @@
 "use client";
 
 import { useState } from "react";
-import { Activity, AudioWaveform, Braces } from "lucide-react";
+import { AudioWaveform, CheckCircle2, ChevronDown, Sparkles } from "lucide-react";
 import { ArchitectureToggle } from "@/components/architecture-toggle";
-import { InspectorDrawer } from "@/components/inspector-drawer";
-import { InstructorControls } from "@/components/instructor-controls";
 import { PipelineView } from "@/components/pipeline/pipeline-view";
 import { ScenarioSelector } from "@/components/scenario-selector";
-import { TeachingNote } from "@/components/teaching-note";
+import { VoiceConsole, type VoiceStage } from "@/components/voice-console";
 import { scenarios } from "@/config/scenarios";
 import type { ArchitectureMode } from "@/types/pipeline";
 
 export function AppShell() {
   const [architecture, setArchitecture] = useState<ArchitectureMode>("cascaded");
   const [scenarioId, setScenarioId] = useState("general-conversation");
-  const [lectureMode, setLectureMode] = useState(false);
-  const [inspectorOpen, setInspectorOpen] = useState(false);
-  const [developerMode, setDeveloperMode] = useState(false);
-  const [notice, setNotice] = useState("Ready to compare architectures. No live services are connected.");
+  const [activeStage, setActiveStage] = useState<VoiceStage>("idle");
+  const [timings, setTimings] = useState<Record<string, number>>({});
 
-  function reset() {
-    setArchitecture("cascaded");
-    setScenarioId("general-conversation");
-    setLectureMode(false);
-    setInspectorOpen(false);
-    setDeveloperMode(false);
-    setNotice("Interface reset. No live services are connected.");
+  function updateTiming(stage: string, duration: number) {
+    setTimings((current) => ({ ...current, [stage]: duration }));
   }
 
   return (
-    <main className="min-h-screen px-4 py-5 sm:px-6 lg:px-8 lg:py-7">
-      <div className="mx-auto max-w-[1720px]">
-        <header className="flex flex-col gap-5 border-b border-white/8 pb-7 lg:flex-row lg:items-end lg:justify-between"><div><div className="flex items-center gap-2 text-sky-300"><AudioWaveform className="size-5" aria-hidden="true" /><span className="text-xs font-semibold tracking-[0.2em] uppercase">Voice systems, revealed</span></div><h1 className="mt-4 text-4xl font-semibold tracking-[-0.04em] text-white sm:text-5xl lg:text-6xl">Inside the Voice Agent</h1><p className="mt-4 max-w-3xl text-base leading-7 text-zinc-400 sm:text-lg">See how voice systems listen, reason, and speak—and why architecture changes the experience.</p></div><div className="flex items-center gap-3 self-start rounded-full border border-white/10 bg-white/[0.035] px-4 py-2 text-xs text-zinc-400 lg:self-auto"><span className="size-2 rounded-full bg-zinc-500" />Milestone 1 · Static teaching interface</div></header>
-        <div className="mt-6 grid gap-6 xl:grid-cols-[300px_minmax(0,1fr)]">
-          <aside className="grid content-start gap-6"><section className="rounded-2xl border border-white/10 bg-[#111216]/92 p-5"><ArchitectureToggle value={architecture} onChange={setArchitecture} /><div className="my-5 h-px bg-white/8" /><ScenarioSelector scenarios={scenarios} selectedId={scenarioId} onChange={setScenarioId} /></section><InstructorControls lectureMode={lectureMode} inspectorOpen={inspectorOpen} developerMode={developerMode} onLectureModeChange={() => setLectureMode((value) => !value)} onInspectorChange={() => setInspectorOpen((value) => !value)} onDeveloperModeChange={() => setDeveloperMode((value) => !value)} onStart={() => setNotice("Static preview only. Live and fixture execution are intentionally deferred.")} onReset={reset} /><TeachingNote /></aside>
-          <div className="min-w-0"><PipelineView architecture={architecture} /><section aria-label="Interface status" className="mt-4 flex flex-col gap-3 rounded-2xl border border-white/8 bg-black/20 px-5 py-4 text-sm sm:flex-row sm:items-center sm:justify-between"><div className="flex items-center gap-3"><Activity className="size-4 shrink-0 text-zinc-500" aria-hidden="true" /><p className="text-zinc-400" aria-live="polite">{notice}</p></div><div className="flex gap-2"><span className={`rounded-full px-2.5 py-1 text-xs font-medium ${lectureMode ? "bg-amber-300/10 text-amber-200" : "bg-white/5 text-zinc-500"}`}>Lecture {lectureMode ? "on" : "off"}</span><span className="rounded-full bg-white/5 px-2.5 py-1 text-xs font-medium text-zinc-500">No API key needed</span></div></section>
-            {developerMode ? <section aria-label="Developer event log" className="mt-4 rounded-2xl border border-white/10 bg-[#111216]/92 p-5"><div className="flex items-center gap-2"><Braces className="size-4 text-violet-300" aria-hidden="true" /><h2 className="font-semibold">Developer event log</h2></div><div className="mt-4 rounded-xl border border-dashed border-white/10 bg-black/20 p-6 text-center text-sm text-zinc-500">No events yet. Event capture begins with presentation runs in Milestone 2.</div></section> : null}
+    <main className="min-h-screen px-4 py-5 sm:px-6 lg:py-8">
+      <div className="mx-auto max-w-6xl">
+        <header className="flex items-center justify-between py-2">
+          <div className="flex items-center gap-3">
+            <span className="grid size-10 place-items-center rounded-xl bg-blue-600 text-white"><AudioWaveform className="size-5" aria-hidden="true" /></span>
+            <span className="font-semibold tracking-[-0.02em] text-slate-950">Inside the Voice Agent</span>
           </div>
-        </div>
+          <span className="hidden items-center gap-2 text-sm text-slate-500 sm:flex"><span className="size-2 rounded-full bg-emerald-500" />Voice service ready</span>
+        </header>
+
+        <section className="pb-10 pt-14 text-center sm:pb-12 sm:pt-20">
+          <div className="mx-auto inline-flex items-center gap-2 rounded-full border border-blue-100 bg-blue-50 px-3 py-1.5 text-xs font-semibold text-blue-700"><Sparkles className="size-3.5" />Speak with the system, then see how it works</div>
+          <h1 className="mx-auto mt-6 max-w-4xl text-4xl font-semibold tracking-[-0.055em] text-slate-950 sm:text-6xl">A voice agent you can actually talk to.</h1>
+          <p className="mx-auto mt-5 max-w-2xl text-base leading-7 text-slate-600 sm:text-lg">Ask a question out loud. The app shows each step from microphone to spoken answer without burying you in controls.</p>
+        </section>
+
+        <VoiceConsole scenarioId={scenarioId} onStageChange={setActiveStage} onTiming={updateTiming} />
+
+        <section className="mt-8 rounded-[2rem] border border-slate-200 bg-white p-5 sm:p-8">
+          <div className="grid gap-6 lg:grid-cols-[1fr_1fr] lg:items-end">
+            <ArchitectureToggle value={architecture} onChange={setArchitecture} />
+            <ScenarioSelector scenarios={scenarios} selectedId={scenarioId} onChange={setScenarioId} />
+          </div>
+          <div className="mt-7 border-t border-slate-100 pt-7">
+            <PipelineView architecture={architecture} activeStage={activeStage} timings={timings} />
+          </div>
+        </section>
+
+        <details className="group mx-auto mt-6 max-w-3xl rounded-2xl border border-slate-200 bg-white px-5 py-4">
+          <summary className="flex cursor-pointer list-none items-center justify-between text-sm font-semibold text-slate-800">What do I need to run this?<ChevronDown className="size-4 transition group-open:rotate-180" /></summary>
+          <div className="mt-4 grid gap-3 text-sm leading-6 text-slate-600 sm:grid-cols-2">
+            <p className="flex gap-2"><CheckCircle2 className="mt-1 size-4 shrink-0 text-emerald-600" />Allow microphone access when your browser asks.</p>
+            <p className="flex gap-2"><CheckCircle2 className="mt-1 size-4 shrink-0 text-emerald-600" />The OpenAI key stays on the server and is never sent to your browser.</p>
+          </div>
+        </details>
+
+        <footer className="py-10 text-center text-xs text-slate-400">Built to make voice systems easier to understand.</footer>
       </div>
-      <InspectorDrawer open={inspectorOpen} onClose={() => setInspectorOpen(false)} />
     </main>
   );
 }

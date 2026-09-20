@@ -8,6 +8,7 @@ export const voiceModels = {
 
 export const voiceDefaults = {
   voice: "coral",
+  silenceDurationMs: 600,
   maxRecordingMs: 30_000,
   maxAudioBytes: 10 * 1024 * 1024,
 } as const;

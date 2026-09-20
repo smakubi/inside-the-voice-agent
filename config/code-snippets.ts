@@ -1,4 +1,5 @@
 import type { ArchitectureMode } from "@/types/pipeline";
+import { voiceDefaults } from "@/config/models";
 
 export interface CodeSnippet {
   title: string;
@@ -13,20 +14,45 @@ const snippets: Record<string, CodeSnippet> = {
     title: "Capture user audio",
     path: "browser → audio turn",
     technology: "MediaRecorder + Web Audio API",
-    note: "The browser demo uses MediaRecorder. This is the closest small Python equivalent for recording one turn.",
-    code: `import sounddevice as sd
+    note: `The browser records with MediaRecorder and checks microphone volume with Web Audio. This Python equivalent waits for speech, then ends the turn after ${voiceDefaults.silenceDurationMs} ms of quiet, with a ${voiceDefaults.maxRecordingMs / 1000}-second recording limit. Transcription still starts after the recording ends.`,
+    code: `import numpy as np
+import sounddevice as sd
 from scipy.io.wavfile import write
 
 sample_rate = 16_000
-seconds = 5
-audio = sd.rec(
-    int(seconds * sample_rate),
-    samplerate=sample_rate,
-    channels=1,
-    dtype="int16",
-)
-sd.wait()
-write("turn.wav", sample_rate, audio)`,
+frame_size = 320  # Check a 20 ms audio frame at a time
+silence_ms = ${voiceDefaults.silenceDurationMs}
+max_seconds = ${voiceDefaults.maxRecordingMs / 1000}
+volume_threshold = 0.025  # RMS volume; tune for microphone/noise
+quiet_samples = 0
+speech_seen = False
+chunks = []
+
+with sd.InputStream(
+    samplerate=sample_rate, channels=1, dtype="float32"
+) as microphone:
+    for _ in range(max_seconds * sample_rate // frame_size):
+        frame, overflowed = microphone.read(frame_size)
+        if overflowed:
+            raise RuntimeError("Microphone overflow; try again.")
+        chunks.append(frame.copy())
+        volume = np.sqrt(np.mean(frame ** 2))
+
+        if volume > volume_threshold:
+            speech_seen = True
+            quiet_samples = 0
+        elif speech_seen:
+            quiet_samples += len(frame)
+            if quiet_samples >= sample_rate * silence_ms / 1000:
+                break
+
+if not speech_seen:
+    raise RuntimeError("No speech detected; start a new turn.")
+
+audio = np.concatenate(chunks)
+pcm = (np.clip(audio, -1, 1) * 32767).astype(np.int16)
+write("turn.wav", sample_rate, pcm)
+# Now send turn.wav to transcription, then resume after playback.`,
   },
   "cascaded:speech-to-text": {
     title: "Transcribe speech",

@@ -1,9 +1,11 @@
 import { NextResponse } from "next/server";
-import { generateText } from "ai";
+import { streamText } from "ai";
 import { z } from "zod";
 import { voiceModels } from "@/config/models";
 import { getBaseten } from "@/lib/baseten";
-import { generateNonEmptyResponse } from "@/lib/non-empty-response";
+import { createTextStreamResponse } from "@/lib/text-stream";
+
+export const maxDuration = 60;
 
 const messageSchema = z.object({
   role: z.enum(["user", "assistant"]),
@@ -20,8 +22,8 @@ export async function POST(request: Request) {
   try {
     const body = requestSchema.parse(await request.json());
     const baseten = getBaseten();
-    const answer = await generateNonEmptyResponse(async () => {
-      const { text } = await generateText({
+    return createTextStreamResponse(async function* (signal) {
+      const result = streamText({
         model: baseten.chat(voiceModels.response),
         instructions: [
           "You are a practical voice assistant in a live spoken conversation.",
@@ -34,11 +36,19 @@ export async function POST(request: Request) {
         ],
         temperature: 0.3,
         maxOutputTokens: 220,
+        abortSignal: signal,
       });
-      return text;
-    });
-
-    return NextResponse.json({ text: answer });
+      // AI SDK's textStream filters out error events. Consume the full stream so a
+      // provider failure after partial text cannot masquerade as a complete answer.
+      let completed = false;
+      for await (const part of result.fullStream) {
+        if (part.type === "text-delta") yield part.text;
+        if (part.type === "error") throw part.error;
+        if (part.type === "abort") throw new Error("Response generation was aborted");
+        if (part.type === "finish") completed = part.finishReason === "stop" || part.finishReason === "length";
+      }
+      if (!completed) throw new Error("Response generation ended without a valid completion");
+    }, request.signal);
   } catch (error) {
     if (error instanceof z.ZodError) {
       return NextResponse.json({ error: "That message could not be processed." }, { status: 400 });

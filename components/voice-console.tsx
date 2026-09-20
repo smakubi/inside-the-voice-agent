@@ -7,6 +7,8 @@ import { CodeInspector } from "@/components/code-inspector";
 import { PipelineView } from "@/components/pipeline/pipeline-view";
 import { getCodeSnippet } from "@/config/code-snippets";
 import { voiceDefaults } from "@/config/models";
+import { PcmPlayer } from "@/lib/pcm-player";
+import { runStreamedVoice } from "@/lib/streamed-voice";
 import type { ArchitectureMode } from "@/types/pipeline";
 
 export type VoiceStage = "idle" | "connecting" | "listening" | "transcribing" | "thinking" | "speaking" | "error";
@@ -38,7 +40,7 @@ interface Props {
 
 const stageCopy: Record<VoiceStage, string> = {
   idle: "Start a conversation when you're ready",
-  connecting: "Connecting to the realtime model…",
+  connecting: "Starting the voice session…",
   listening: "Listening — speak naturally and pause when you're done",
   transcribing: "Transcribing your message…",
   thinking: "Preparing a response…",
@@ -47,7 +49,7 @@ const stageCopy: Record<VoiceStage, string> = {
 };
 
 const silenceThreshold = 0.025;
-const silenceDurationMs = 1_100;
+const silenceDurationMs = voiceDefaults.silenceDurationMs;
 
 function supportedMimeType() {
   const options = ["audio/webm;codecs=opus", "audio/webm", "audio/mp4"];
@@ -61,6 +63,7 @@ async function readError(response: Response) {
 
 export function VoiceConsole({ architecture, onArchitectureChange }: Props) {
   const [stage, setStage] = useState<VoiceStage>("idle");
+  const [streamingText, setStreamingText] = useState("");
   const [messages, setMessages] = useState<ConversationMessage[]>([]);
   const [timings, setTimings] = useState<Record<string, number>>({});
   const [textInput, setTextInput] = useState("");
@@ -76,7 +79,10 @@ export function VoiceConsole({ architecture, onArchitectureChange }: Props) {
   const audioContextRef = useRef<AudioContext | null>(null);
   const animationFrameRef = useRef<number | null>(null);
   const turnTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const audioRef = useRef<HTMLAudioElement | null>(null);
+  const playerRef = useRef<PcmPlayer | null>(null);
+  const resumeTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const endOfSpeechAtRef = useRef<number | null>(null);
+  const turnIdRef = useRef(0);
   const peerConnectionRef = useRef<RTCPeerConnection | null>(null);
   const dataChannelRef = useRef<RTCDataChannel | null>(null);
   const remoteAudioRef = useRef<HTMLAudioElement | null>(null);
@@ -93,6 +99,7 @@ export function VoiceConsole({ architecture, onArchitectureChange }: Props) {
   const transcriptEndRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
+    const turnId = turnIdRef;
     safetyIdentifierRef.current = window.crypto.randomUUID();
     return () => {
       sessionActiveRef.current = false;
@@ -102,7 +109,9 @@ export function VoiceConsole({ architecture, onArchitectureChange }: Props) {
       if (recorderRef.current?.state === "recording") recorderRef.current.stop();
       streamRef.current?.getTracks().forEach((track) => track.stop());
       void audioContextRef.current?.close();
-      audioRef.current?.pause();
+      turnId.current++;
+      if (resumeTimeoutRef.current) clearTimeout(resumeTimeoutRef.current);
+      void playerRef.current?.close();
       dataChannelRef.current?.close();
       peerConnectionRef.current?.close();
       remoteAudioRef.current?.pause();
@@ -112,21 +121,26 @@ export function VoiceConsole({ architecture, onArchitectureChange }: Props) {
 
   useEffect(() => {
     transcriptEndRef.current?.scrollIntoView?.({ behavior: "smooth", block: "nearest" });
-  }, [messages.length]);
+  }, [messages.length, streamingText]);
 
   function updateStage(nextStage: VoiceStage) {
     setStage(nextStage);
   }
 
   function appendMessage(message: ConversationMessage) {
-    setMessages((current) => {
-      const nextMessages = [...current, message];
-      messagesRef.current = nextMessages;
-      return nextMessages;
-    });
+    const nextMessages = [...messagesRef.current, message];
+    messagesRef.current = nextMessages;
+    setMessages(nextMessages);
+  }
+
+  function getPlayer() {
+    playerRef.current ??= new PcmPlayer();
+    return playerRef.current;
   }
 
   function clearTurnMonitoring() {
+    if (resumeTimeoutRef.current) clearTimeout(resumeTimeoutRef.current);
+    resumeTimeoutRef.current = null;
     if (animationFrameRef.current !== null) cancelAnimationFrame(animationFrameRef.current);
     if (turnTimeoutRef.current) clearTimeout(turnTimeoutRef.current);
     animationFrameRef.current = null;
@@ -144,6 +158,8 @@ export function VoiceConsole({ architecture, onArchitectureChange }: Props) {
     void audioContextRef.current?.close();
     audioContextRef.current = null;
     analyserRef.current = null;
+    void playerRef.current?.close();
+    playerRef.current = null;
     recordingStartedAtRef.current = null;
     realtimeSpeechStartedAtRef.current = null;
     realtimeResponseStartedAtRef.current = null;
@@ -160,10 +176,12 @@ export function VoiceConsole({ architecture, onArchitectureChange }: Props) {
   }
 
   function endConversation() {
+    turnIdRef.current++;
+    setStreamingText("");
     abortControllerRef.current?.abort();
     abortControllerRef.current = null;
-    audioRef.current?.pause();
-    audioRef.current = null;
+    void playerRef.current?.close();
+    playerRef.current = null;
     releaseSessionResources();
     setSessionActive(false);
     updateStage("idle");
@@ -204,7 +222,9 @@ export function VoiceConsole({ architecture, onArchitectureChange }: Props) {
   function resumeListening() {
     const stream = streamRef.current;
     if (sessionActiveRef.current && stream?.active) {
-      window.setTimeout(() => beginListening(stream), 250);
+      resumeTimeoutRef.current = setTimeout(() => {
+        if (streamRef.current === stream) beginListening(stream);
+      }, 100);
     } else {
       updateStage("idle");
     }
@@ -212,69 +232,61 @@ export function VoiceConsole({ architecture, onArchitectureChange }: Props) {
 
   async function generateResponse(userText: string, continuous: boolean) {
     setError("");
+    setStreamingText("");
     const priorMessages = messagesRef.current.slice(-10);
     appendMessage({ role: "user", content: userText });
     updateStage("thinking");
     const controller = new AbortController();
     abortControllerRef.current = controller;
+    const turnId = ++turnIdRef.current;
+    const startedAt = performance.now();
+    const speechEndedAt = continuous ? endOfSpeechAtRef.current ?? startedAt : startedAt;
+    const current = () => turnIdRef.current === turnId && !controller.signal.aborted;
+    setTimings((previous): Record<string, number> => continuous ? {
+      "speech-to-text": previous["speech-to-text"],
+      "user-audio": previous["user-audio"],
+    } : {});
 
     try {
-      const response = await measured("language-model", () =>
-        fetch("/api/respond", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            text: userText,
-            history: priorMessages,
-            safetyIdentifier: safetyIdentifierRef.current,
-          }),
-          signal: controller.signal,
-        }),
-      );
-
-      if (!response.ok) throw new Error(await readError(response));
-      const { text } = (await response.json()) as { text: string };
+      const player = getPlayer();
+      await player.start();
+      controller.signal.throwIfAborted();
+      player.beginTurn(() => {
+        if (!current()) return;
+        setTimings((previous) => ({ ...previous, "first-audio": Math.round(performance.now() - speechEndedAt) }));
+        updateStage("speaking");
+      });
+      const response = await fetch("/api/respond", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text: userText, history: priorMessages, safetyIdentifier: safetyIdentifierRef.current }),
+        signal: controller.signal,
+      });
+      controller.signal.throwIfAborted();
+      const text = await runStreamedVoice({
+        response, signal: controller.signal, player,
+        onText: (partial) => { if (current()) setStreamingText(partial); },
+        onFirstText: () => {
+          if (current()) setTimings((previous) => ({ ...previous, "language-model": Math.round(performance.now() - startedAt) }));
+        },
+        onFirstSpeechByte: (latency) => {
+          if (current()) setTimings((previous) => ({ ...previous, "text-to-speech": Math.round(latency) }));
+        },
+      });
+      if (!current()) return;
       appendMessage({ role: "assistant", content: text });
-      updateStage("speaking");
-
-      const speechResponse = await measured("text-to-speech", () =>
-        fetch("/api/speak", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ text }),
-          signal: controller.signal,
-        }),
-      );
-
-      if (!speechResponse.ok) throw new Error(await readError(speechResponse));
-      const audioUrl = URL.createObjectURL(await speechResponse.blob());
-      const audio = new Audio(audioUrl);
-      audioRef.current = audio;
-      const playbackStartedAt = performance.now();
-      let playbackFinished = false;
-      const finishPlayback = () => {
-        if (playbackFinished) return;
-        playbackFinished = true;
-        setTimings((current) => ({ ...current, "assistant-audio": Math.round(performance.now() - playbackStartedAt) }));
-        URL.revokeObjectURL(audioUrl);
-        audioRef.current = null;
-        if (continuous) resumeListening();
-        else updateStage("idle");
-      };
-      audio.onended = finishPlayback;
-      audio.onerror = finishPlayback;
-
-      try {
-        await audio.play();
-      } catch {
-        setError("Audio playback was blocked, but the response is available in the transcript.");
-        finishPlayback();
-      }
+      setStreamingText("");
+      setTimings((previous) => ({ ...previous, "assistant-audio": Math.round(player.durationMs) }));
+      if (continuous) resumeListening();
+      else updateStage("idle");
     } catch (caughtError) {
-      if (caughtError instanceof DOMException && caughtError.name === "AbortError") return;
+      if (!current()) return;
+      controller.abort();
+      playerRef.current?.stop();
       setError(caughtError instanceof Error ? caughtError.message : "The voice service is unavailable.");
-      if (continuous) endConversation();
-      else updateStage("error");
+      releaseSessionResources();
+      setSessionActive(false);
+      updateStage("error");
     } finally {
       if (abortControllerRef.current === controller) abortControllerRef.current = null;
     }
@@ -294,6 +306,7 @@ export function VoiceConsole({ architecture, onArchitectureChange }: Props) {
       );
       if (!response.ok) throw new Error(await readError(response));
       const { text } = (await response.json()) as { text: string };
+      controller.signal.throwIfAborted();
       if (!text) {
         resumeListening();
         return;
@@ -310,6 +323,7 @@ export function VoiceConsole({ architecture, onArchitectureChange }: Props) {
 
   function finishTurn(shouldProcess: boolean) {
     clearTurnMonitoring();
+    endOfSpeechAtRef.current = silenceStartedRef.current ?? performance.now();
     if (shouldProcess && recordingStartedAtRef.current !== null) {
       setTimings((current) => ({ ...current, "user-audio": Math.round(performance.now() - recordingStartedAtRef.current!) }));
     }
@@ -472,9 +486,14 @@ export function VoiceConsole({ architecture, onArchitectureChange }: Props) {
       return;
     }
 
+    const startupId = ++turnIdRef.current;
+    const controller = new AbortController();
+    abortControllerRef.current = controller;
+    const current = () => turnIdRef.current === startupId && !controller.signal.aborted;
     updateStage("connecting");
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      if (!current()) { stream.getTracks().forEach((track) => track.stop()); return; }
       const peerConnection = new RTCPeerConnection();
       const remoteAudio = new Audio();
       remoteAudio.autoplay = true;
@@ -498,22 +517,29 @@ export function VoiceConsole({ architecture, onArchitectureChange }: Props) {
 
       const dataChannel = peerConnection.createDataChannel("oai-events");
       dataChannelRef.current = dataChannel;
-      dataChannel.addEventListener("message", handleRealtimeEvent);
+      dataChannel.addEventListener("message", (event) => { if (current()) handleRealtimeEvent(event); });
       dataChannel.addEventListener("open", () => {
-        updateStage("listening");
+        if (current()) updateStage("listening");
       });
 
       const offer = await peerConnection.createOffer();
+      if (!current()) return;
       await peerConnection.setLocalDescription(offer);
+      if (!current()) return;
       const response = await fetch("/api/realtime/session", {
         method: "POST",
         headers: { "Content-Type": "application/sdp" },
         body: offer.sdp,
+        signal: controller.signal,
       });
       if (!response.ok) throw new Error(await readError(response));
-      await peerConnection.setRemoteDescription({ type: "answer", sdp: await response.text() });
+      const answer = await response.text();
+      if (!current()) return;
+      await peerConnection.setRemoteDescription({ type: "answer", sdp: answer });
     } catch (caughtError) {
-      failSession(caughtError instanceof Error ? caughtError.message : "The realtime session could not be started.");
+      if (current()) failSession(caughtError instanceof Error ? caughtError.message : "The realtime session could not be started.");
+    } finally {
+      if (abortControllerRef.current === controller) abortControllerRef.current = null;
     }
   }
 
@@ -525,8 +551,13 @@ export function VoiceConsole({ architecture, onArchitectureChange }: Props) {
       return;
     }
 
+    const startupId = ++turnIdRef.current;
+    updateStage("connecting");
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      await getPlayer().start();
+      if (turnIdRef.current !== startupId) return;
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } });
+      if (turnIdRef.current !== startupId) { stream.getTracks().forEach((track) => track.stop()); return; }
       const audioContext = new AudioContext();
       const analyser = audioContext.createAnalyser();
       analyser.fftSize = 2_048;
@@ -538,6 +569,8 @@ export function VoiceConsole({ architecture, onArchitectureChange }: Props) {
       setSessionActive(true);
       beginListening(stream);
     } catch {
+      if (turnIdRef.current !== startupId) return;
+      releaseSessionResources();
       setShowTextInput(true);
       setError("Microphone access was blocked. Allow it in your browser or type instead.");
       updateStage("error");
@@ -572,6 +605,7 @@ export function VoiceConsole({ architecture, onArchitectureChange }: Props) {
     void generateResponse(message, false);
   }
 
+  const conversationBusy = sessionActive || ["connecting", "transcribing", "thinking", "speaking"].includes(stage);
   const textBusy = architecture === "realtime" ? dataChannelRef.current?.readyState !== "open" : !["idle", "error"].includes(stage);
   const selectedSnippet = selectedStageId ? getCodeSnippet(architecture, selectedStageId) : undefined;
 
@@ -589,7 +623,7 @@ export function VoiceConsole({ architecture, onArchitectureChange }: Props) {
         </div>
 
         <div className="mt-6 flex-1 overflow-y-auto rounded-2xl bg-slate-50 p-4 sm:p-5" aria-label="Conversation transcript">
-          {messages.length ? (
+          {messages.length || streamingText ? (
             <div className="space-y-4">
               {messages.map((message, index) => (
                 <div key={`${message.role}-${index}`} className={`flex ${message.role === "user" ? "justify-end" : "justify-start"}`}>
@@ -598,6 +632,7 @@ export function VoiceConsole({ architecture, onArchitectureChange }: Props) {
                   </div>
                 </div>
               ))}
+              {streamingText ? <div className="max-w-[88%] rounded-2xl rounded-bl-md bg-white px-4 py-3 text-sm leading-6 text-slate-800 shadow-sm ring-1 ring-slate-200" aria-label="Streaming assistant response">{streamingText}</div> : null}
               <div ref={transcriptEndRef} />
             </div>
           ) : (
@@ -606,8 +641,8 @@ export function VoiceConsole({ architecture, onArchitectureChange }: Props) {
         </div>
 
         <div className="mt-6 text-center">
-          <button type="button" onClick={sessionActive ? endConversation : startConversation} aria-label={sessionActive ? "End conversation" : "Start conversation"} className={`mx-auto grid size-20 place-items-center rounded-full text-white shadow-lg transition hover:-translate-y-0.5 ${sessionActive ? "bg-rose-500 shadow-rose-200 hover:bg-rose-600" : "bg-blue-600 shadow-blue-200 hover:bg-blue-700"}`}>
-            {sessionActive ? <Square className="size-6 fill-current" /> : <Mic className="size-7" />}
+          <button type="button" onClick={conversationBusy ? endConversation : startConversation} aria-label={conversationBusy ? "End conversation" : "Start conversation"} className={`mx-auto grid size-20 place-items-center rounded-full text-white shadow-lg transition hover:-translate-y-0.5 ${conversationBusy ? "bg-rose-500 shadow-rose-200 hover:bg-rose-600" : "bg-blue-600 shadow-blue-200 hover:bg-blue-700"}`}>
+            {conversationBusy ? <Square className="size-6 fill-current" /> : <Mic className="size-7" />}
           </button>
           <p className="mt-3 min-h-6 text-sm font-medium text-slate-700" aria-live="polite">{stageCopy[stage]}</p>
           {error ? <p className="mx-auto mt-1 max-w-lg text-sm text-rose-600" role="alert">{error}</p> : null}
@@ -625,6 +660,9 @@ export function VoiceConsole({ architecture, onArchitectureChange }: Props) {
 
       <aside className="order-1 bg-slate-50/70 p-5 sm:p-8 lg:order-2" aria-label="Live architecture view">
         <ArchitectureToggle value={architecture} onChange={handleArchitectureChange} />
+        {architecture === "cascaded" && timings["first-audio"] !== undefined ? (
+          <p className="mt-4 text-sm font-medium text-slate-700" role="status">Time to first audio: {timings["first-audio"]} ms<span className="mt-1 block text-xs font-normal text-slate-500">From the detected end of speech (or text submission) to playback start.</span></p>
+        ) : null}
         <div className="mt-7 border-t border-slate-200 pt-6">
           <PipelineView architecture={architecture} activeStage={stage} timings={timings} selectedStageId={selectedStageId} onStageSelect={setSelectedStageId} />
         </div>

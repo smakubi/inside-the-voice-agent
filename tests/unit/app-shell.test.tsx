@@ -1,11 +1,32 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { installAudioContext } from "@/tests/fixtures/audio-context";
 import { AppShell } from "@/components/app-shell";
 
 afterEach(() => vi.unstubAllGlobals());
 
 describe("AppShell", () => {
+  it.each(["Cascaded", "Speech-to-speech"])("does not reopen %s microphone capture after New conversation cancels startup", async (mode) => {
+    installAudioContext();
+    let resolveMicrophone!: (stream: MediaStream) => void;
+    const microphone = new Promise<MediaStream>((resolve) => { resolveMicrophone = resolve; });
+    vi.stubGlobal("navigator", { mediaDevices: { getUserMedia: () => microphone } });
+    vi.stubGlobal("MediaRecorder", class { static isTypeSupported() { return true; } });
+    vi.stubGlobal("RTCPeerConnection", class {});
+    const stopped = vi.fn();
+    const stream = { active: true, getTracks: () => [{ stop: stopped }] } as unknown as MediaStream;
+    const user = userEvent.setup();
+    render(<AppShell />);
+    if (mode === "Speech-to-speech") await user.click(screen.getByRole("radio", { name: /Speech-to-speech/ }));
+    await user.click(screen.getByRole("button", { name: "Start conversation" }));
+    await user.click(screen.getByRole("button", { name: "New conversation" }));
+    await act(async () => { resolveMicrophone(stream); await microphone; });
+    expect(stopped).toHaveBeenCalledOnce();
+    expect(screen.getByText(/Start a conversation/)).toBeInTheDocument();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
   it("switches between five-stage cascaded and three-stage realtime pipelines", async () => {
     const user = userEvent.setup();
     render(<AppShell />);
@@ -47,21 +68,12 @@ describe("AppShell", () => {
     vi.stubGlobal("fetch", vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
       if (input === "/api/respond") {
         responseRequests.push(JSON.parse(String(init?.body)) as typeof responseRequests[number]);
-        return Response.json({ text: `Answer ${responseRequests.length}` });
+        const answer = `Answer ${responseRequests.length}`;
+        return new Response(JSON.stringify({ type: "text", text: answer }) + '\n{"type":"done"}\n');
       }
-      return new Response(new Blob(["audio"], { type: "audio/mpeg" }));
+      return new Response(new Uint8Array([0, 0]), { headers: { "Content-Type": "audio/pcm" } });
     }));
-    const NativeURL = URL;
-    vi.stubGlobal("URL", class extends NativeURL {
-      static createObjectURL() { return "blob:test"; }
-      static revokeObjectURL() {}
-    });
-    vi.stubGlobal("Audio", class {
-      onended: (() => void) | null = null;
-      onerror: (() => void) | null = null;
-      pause() {}
-      async play() { queueMicrotask(() => this.onended?.()); }
-    });
+    installAudioContext();
 
     const user = userEvent.setup();
     render(<AppShell />);
@@ -69,11 +81,13 @@ describe("AppShell", () => {
     const input = screen.getByLabelText("Message the voice agent");
     await user.type(input, "My name is Ada");
     await user.click(screen.getByRole("button", { name: "Send message" }));
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
     await screen.findByText("Answer 1");
     await waitFor(() => expect(screen.getByText(/Start a conversation/)).toBeInTheDocument());
     await user.type(input, "What is my name?");
     await user.click(screen.getByRole("button", { name: "Send message" }));
     await screen.findByText("Answer 2");
+    await waitFor(() => expect(screen.getByText(/Start a conversation/)).toBeInTheDocument());
 
     expect(responseRequests[1].history).toEqual([
       { role: "user", content: "My name is Ada" },

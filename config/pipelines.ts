@@ -5,9 +5,9 @@ import type { PipelineStageDefinition } from "@/types/pipeline";
 export const cascadedStages: PipelineStageDefinition[] = [
   { id: "user-audio", label: "User Audio", shortLabel: "Listen", description: "Spoken input enters the system.", technology: "MediaRecorder + Web Audio API", metricLabel: "Duration", placeholderLatency: "— ms", status: "ready", icon: AudioLines },
   { id: "speech-to-text", label: "Speech-to-Text", shortLabel: "Transcribe", description: "Audio becomes written language.", technology: `OpenAI · ${voiceModels.transcription}`, metricLabel: "Latency", placeholderLatency: "— ms", status: "idle", icon: Ear },
-  { id: "language-model", label: "Large Language Model", shortLabel: "Reason", description: "Text is interpreted and answered.", technology: `Vercel AI SDK · Baseten · ${voiceModels.response}`, metricLabel: "Latency", placeholderLatency: "— ms", status: "idle", icon: BrainCircuit },
-  { id: "text-to-speech", label: "Text-to-Speech", shortLabel: "Synthesize", description: "The answer becomes spoken audio.", technology: `OpenAI · ${voiceModels.speech}`, metricLabel: "Latency", placeholderLatency: "— ms", status: "idle", icon: MessageSquareText },
-  { id: "assistant-audio", label: "Assistant Audio", shortLabel: "Speak", description: "The listener hears the response.", technology: "Browser Audio API", metricLabel: "Duration", placeholderLatency: "— ms", status: "idle", icon: Speech },
+  { id: "language-model", label: "Large Language Model", shortLabel: "Reason", description: "Text is interpreted and answered.", technology: `Vercel AI SDK · Baseten · ${voiceModels.response}`, metricLabel: "First text", placeholderLatency: "— ms", status: "idle", icon: BrainCircuit },
+  { id: "text-to-speech", label: "Text-to-Speech", shortLabel: "Synthesize", description: "The answer becomes spoken audio.", technology: `OpenAI · ${voiceModels.speech}`, metricLabel: "First audio bytes", placeholderLatency: "— ms", status: "idle", icon: MessageSquareText },
+  { id: "assistant-audio", label: "Assistant Audio", shortLabel: "Speak", description: "The listener hears the response.", technology: "Streaming PCM · Web Audio API", metricLabel: "Duration", placeholderLatency: "— ms", status: "idle", icon: Speech },
 ];
 
 export const realtimeStages: PipelineStageDefinition[] = [

@@ -30,3 +30,9 @@ pnpm build
 ```
 
 The application uses Next.js App Router, strict TypeScript, Tailwind CSS, Motion, Lucide icons, Vitest, Testing Library, and Playwright.
+
+## Streaming voice
+
+Cascaded mode streams answer text into sentence-sized speech requests and plays incoming PCM audio immediately. The silence wait is 600 ms; model selections are unchanged. Speech-to-speech mode continues to use OpenAI Realtime over WebRTC.
+
+See [voice streaming and latency](docs/voice-latency.md) for the wire format, timing definitions, tradeoffs, cancellation behavior, and the LiveKit/Pipecat recommendation.

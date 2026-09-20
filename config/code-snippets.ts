@@ -49,7 +49,7 @@ print(transcript.text)`,
     title: "Generate the answer",
     path: "POST /api/respond",
     technology: "Baseten · zai-org/GLM-4.7",
-    note: "The TypeScript demo uses Vercel AI SDK generateText with Baseten's OpenAI-compatible chat endpoint. GLM 4.7 keeps thinking off by default for faster voice responses.",
+    note: "The TypeScript demo streams tokens from Baseten with Vercel AI SDK. Complete sentences start speech synthesis while the rest of the answer is still generating.",
     code: `import os
 from openai import OpenAI
 
@@ -58,7 +58,7 @@ client = OpenAI(
     base_url="https://inference.baseten.co/v1",
 )
 
-response = client.chat.completions.create(
+stream = client.chat.completions.create(
     model="zai-org/GLM-4.7",
     messages=[
         {"role": "system", "content": "Reply naturally in 1–3 sentences."},
@@ -66,39 +66,49 @@ response = client.chat.completions.create(
     ],
     temperature=0.3,
     max_tokens=220,
+    stream=True,
 )
 
-answer = response.choices[0].message.content`,
+for chunk in stream:
+    text = chunk.choices[0].delta.content or ""
+    print(text, end="", flush=True)
+    # Accumulate complete sentences for the speech queue.`,
   },
   "cascaded:text-to-speech": {
     title: "Synthesize speech",
     path: "POST /api/speak",
     technology: "OpenAI · gpt-4o-mini-tts",
-    note: "Convert the model's text answer into an MP3 response.",
-    code: `from pathlib import Path
-from openai import OpenAI
+    note: "Send each complete sentence to TTS. Forward raw PCM chunks immediately; the next sentence can synthesize while earlier audio plays.",
+    code: `from openai import OpenAI
+import sounddevice as sd
 
 client = OpenAI()
-speech_file = Path("answer.mp3")
 
 with client.audio.speech.with_streaming_response.create(
     model="gpt-4o-mini-tts",
     voice="coral",
-    input=answer,
+    input=sentence,  # A completed sentence from the text stream
+    response_format="pcm",
 ) as response:
-    response.stream_to_file(speech_file)`,
+    with sd.RawOutputStream(
+        samplerate=24_000, channels=1, dtype="int16"
+    ) as speaker:
+        for chunk in response.iter_bytes(chunk_size=4_800):
+            speaker.write(chunk)`,
   },
   "cascaded:assistant-audio": {
     title: "Play assistant audio",
     path: "audio response → browser",
-    technology: "Browser Audio API",
-    note: "The browser uses an HTML audio element. Python can decode and play the generated file locally.",
+    technology: "Streaming PCM · Web Audio API",
+    note: "The browser schedules 100 ms PCM buffers on a single audio timeline, preserves sentence order, and limits queued audio to about one second. This Python equivalent plays incoming PCM directly.",
     code: `import sounddevice as sd
-import soundfile as sf
 
-audio, sample_rate = sf.read("answer.mp3")
-sd.play(audio, sample_rate)
-sd.wait()`,
+with sd.RawOutputStream(
+    samplerate=24_000, channels=1, dtype="int16"
+) as speaker:
+    for pcm_chunk in incoming_pcm_chunks:
+        speaker.write(pcm_chunk)
+    # Stop/close the stream when the conversation ends.`,
   },
   "realtime:user-audio": {
     title: "Stream microphone audio",

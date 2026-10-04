@@ -1,6 +1,6 @@
 # Inside the Voice Agent
 
-A classroom-focused, working voice agent for comparing cascaded and native speech-to-speech architectures.
+A classroom-focused, working voice agent for comparing streaming cascaded, native Realtime, and full-duplex GPT-Live architectures.
 
 ## Teaching views
 
@@ -8,7 +8,7 @@ A classroom-focused, working voice agent for comparing cascaded and native speec
 - `/architecture` walks through the execution graph and Python equivalent component by component.
 - `/providers` compares native speech-to-speech providers with cascaded and hybrid platforms.
 
-The live demo supports a cascaded OpenAI/Baseten pipeline and OpenAI Realtime over WebRTC. Server-side API keys are required for provider calls.
+The demo has three modes: live transcription → Baseten GLM → streaming TTS, native OpenAI Realtime, and full-duplex GPT-Live with Responses delegation. Server-side API keys are required for provider calls.
 
 ## Development
 
@@ -34,7 +34,7 @@ The application uses Next.js App Router, strict TypeScript, Tailwind CSS, Motion
 
 ## Streaming voice
 
-Cascaded mode streams answer text into sentence-sized speech requests and plays incoming PCM audio immediately. The silence wait is 600 ms; model selections are unchanged. Speech-to-speech mode continues to use OpenAI Realtime over WebRTC.
+Cascaded mode streams microphone audio into gpt-live-transcribe over WebRTC and uses client Silero VAD v6 with a 400 ms pause. GLM thinking is disabled; the opening phrase starts streaming TTS early. Native Realtime uses eager semantic VAD. GPT-Live keeps input/output active simultaneously and delegates to gpt-6-luna with hosted web search. Model access must be enabled for your OpenAI project. VAD runtime assets load from pinned CDN URLs on first use.
 
 See [voice streaming and latency](docs/voice-latency.md) for the wire format, timing definitions, tradeoffs, cancellation behavior, and the LiveKit/Pipecat recommendation.
 

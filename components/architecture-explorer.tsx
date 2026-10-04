@@ -5,21 +5,27 @@ import { ArrowLeft, ArrowRight, Check, Copy } from "lucide-react";
 import { ArchitectureToggle } from "@/components/architecture-toggle";
 import { PythonCode } from "@/components/python-code";
 import { getCodeSnippet } from "@/config/code-snippets";
-import { cascadedStages, realtimeStages } from "@/config/pipelines";
+import { pipelines } from "@/config/pipelines";
 import type { ArchitectureMode } from "@/types/pipeline";
 
 const walkthroughs = {
   cascaded: [
-    ["Start with the browser", "Show how MediaRecorder and silence detection define one user turn."],
-    ["Trace the three APIs", "Follow the recording through transcription, reasoning, and synthesis."],
-    ["Compare the timings", "Separate audio duration from processing latency at every boundary."],
+    ["Start with the browser", "Audio streams over WebRTC while Silero VAD v6 detects speech. A 400 ms pause commits the turn."],
+    ["Trace the three APIs", "Follow live transcription into GLM with thinking disabled, then the first phrase into streaming TTS."],
+    ["Compare the timings", "Compare end-of-speech to first audio. Transcription finalization excludes work done while speaking."],
     ["Discuss control", "Point out where transcripts, model choice, and exact spoken wording can be inspected."],
   ],
   realtime: [
     ["Open one connection", "Show how the microphone and remote audio share a WebRTC session."],
-    ["Follow model events", "Trace speech detection, response creation, audio deltas, and transcripts."],
+    ["Follow model events", "Trace eager semantic VAD and actual output-buffer events. Transcript completion is not playback completion."],
     ["Inspect tool use", "Explain how current-fact questions call web search over the data channel."],
     ["Compare architectures", "Contrast natural turn-taking with the observability of the cascaded path."],
+  ],
+  live: [
+    ["Keep both audio tracks open", "Speak while the assistant is speaking. Full duplex allows overlap; interruption support alone is different."],
+    ["Follow independent captions", "User and assistant transcript deltas carry session timestamps and have no completed-turn event."],
+    ["Delegate while talking", "GPT-Live handles conversation; a Responses backend reasons and searches without stopping the voice session."],
+    ["Close gracefully", "Send session.close, await session.closed and final usage, then release microphone and transport."],
   ],
 } satisfies Record<ArchitectureMode, string[][]>;
 
@@ -27,7 +33,7 @@ export function ArchitectureExplorer() {
   const [architecture, setArchitecture] = useState<ArchitectureMode>("cascaded");
   const [selectedIndex, setSelectedIndex] = useState(0);
   const [copied, setCopied] = useState(false);
-  const stages = architecture === "cascaded" ? cascadedStages : realtimeStages;
+  const stages = pipelines[architecture];
   const selectedStage = stages[selectedIndex];
   const snippet = getCodeSnippet(architecture, selectedStage.id);
 
@@ -54,7 +60,7 @@ export function ArchitectureExplorer() {
         </div>
 
         <div className="min-w-0">
-          <div className="grid gap-2" aria-label={`${architecture === "cascaded" ? "Cascaded" : "Speech-to-speech"} execution flow`}>
+          <div className="grid gap-2" aria-label={`${architecture === "cascaded" ? "Cascaded" : architecture === "live" ? "GPT-Live" : "Speech-to-speech"} execution flow`}>
             {stages.map((stage, index) => {
               const Icon = stage.icon;
               const selected = index === selectedIndex;
@@ -104,6 +110,18 @@ export function ArchitectureExplorer() {
             <button type="button" disabled={selectedIndex === stages.length - 1} onClick={() => setSelectedIndex((current) => current + 1)} className="inline-flex items-center gap-2 text-sm font-medium text-slate-600 disabled:opacity-30">Next component<ArrowRight className="size-4" /></button>
           </footer>
         </article>
+      </section>
+
+      <section className="border-t border-slate-200 py-10" aria-labelledby="voice-design-heading">
+        <h2 id="voice-design-heading" className="text-2xl font-semibold text-slate-950">What makes a voice agent responsive?</h2>
+        <div className="mt-6 grid gap-6 md:grid-cols-3">
+          <div><h3 className="font-semibold">Transport and turn detection</h3><p className="mt-2 text-sm leading-6 text-slate-600">WebRTC transports live audio and handles media timing. VAD detects speech boundaries. Neither chooses your reasoning model or makes a cascaded pipeline native speech-to-speech. Live transcription processes speech as it arrives; VAD commits the final text after a short pause.</p></div>
+          <div><h3 className="font-semibold">Overlap useful work</h3><p className="mt-2 text-sm leading-6 text-slate-600">Transcribe while listening, synthesize the opening phrase before the answer finishes, and play PCM as it arrives. GLM thinking is disabled for this conversational demo. A shorter pause reduces delay but can cut off a speaker; tune with real conversations.</p></div>
+          <div><h3 className="font-semibold">Full duplex versus interruptions</h3><p className="mt-2 text-sm leading-6 text-slate-600">Cascaded mode pauses input during playback. Native Realtime supports barge-in and cancels its response when the user interrupts. GPT-Live can listen and speak simultaneously while backend work continues. Its caption fragments are not alternating completed turns.</p></div>
+        </div>
+        <h3 className="mt-8 text-lg font-semibold">When do you need LiveKit or Pipecat?</h3>
+        <p className="mt-3 max-w-4xl text-sm leading-6 text-slate-600">Neither is required for these direct browser-to-OpenAI demos. Add an orchestration framework when you need multiple streaming providers, full-duplex cascaded interruption handling, telephony, rooms or multiple participants, agent workers, or robust session routing. LiveKit offers media infrastructure and TypeScript/Python agents; Pipecat coordinates Python audio pipelines and transports. Those workers run in an agent service, rather than a short-lived Vercel request.</p>
+        <p className="mt-4 text-sm text-blue-700"><a href="https://developers.openai.com/api/docs/guides/realtime-transcription" target="_blank" rel="noreferrer">Live transcription</a> · <a href="https://developers.openai.com/api/docs/guides/live" target="_blank" rel="noreferrer">GPT-Live</a> · <a href="https://docs.livekit.io/agents/" target="_blank" rel="noreferrer">LiveKit Agents</a> · <a href="https://docs.pipecat.ai/" target="_blank" rel="noreferrer">Pipecat</a></p>
       </section>
 
       <section className="border-t border-slate-200 py-12">

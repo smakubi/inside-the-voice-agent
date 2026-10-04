@@ -15,5 +15,10 @@ describe("ArchitectureExplorer", () => {
     await user.click(screen.getByRole("radio", { name: /Speech-to-speech/ }));
     expect(screen.getByText("Step 1 of 3")).toBeInTheDocument();
     expect(screen.getByLabelText("Speech-to-speech execution flow")).toBeInTheDocument();
+    await user.click(screen.getByRole("radio", { name: /GPT-Live/ }));
+    expect(screen.getByText("Step 1 of 4")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Next component" }));
+    expect(screen.getByText("Run the full-duplex voice model")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "When do you need LiveKit or Pipecat?" })).toBeInTheDocument();
   });
 });

@@ -3,8 +3,8 @@ import { voiceModels } from "@/config/models";
 import type { PipelineStageDefinition } from "@/types/pipeline";
 
 export const cascadedStages: PipelineStageDefinition[] = [
-  { id: "user-audio", label: "User Audio", shortLabel: "Listen", description: "Spoken input enters the system.", technology: "MediaRecorder + Web Audio API", metricLabel: "Duration", placeholderLatency: "— ms", status: "ready", icon: AudioLines },
-  { id: "speech-to-text", label: "Speech-to-Text", shortLabel: "Transcribe", description: "Audio becomes written language.", technology: `OpenAI · ${voiceModels.transcription}`, metricLabel: "Latency", placeholderLatency: "— ms", status: "idle", icon: Ear },
+  { id: "user-audio", label: "User Audio", shortLabel: "Listen", description: "Spoken input enters the system.", technology: "WebRTC + Silero VAD v6", metricLabel: "Duration", placeholderLatency: "— ms", status: "ready", icon: AudioLines },
+  { id: "speech-to-text", label: "Speech-to-Text", shortLabel: "Transcribe", description: "Audio becomes written language.", technology: `OpenAI · ${voiceModels.liveTranscription}`, metricLabel: "Latency", placeholderLatency: "— ms", status: "idle", icon: Ear },
   { id: "language-model", label: "Large Language Model", shortLabel: "Reason", description: "Text is interpreted and answered.", technology: `Vercel AI SDK · Baseten · ${voiceModels.response}`, metricLabel: "First text", placeholderLatency: "— ms", status: "idle", icon: BrainCircuit },
   { id: "text-to-speech", label: "Text-to-Speech", shortLabel: "Synthesize", description: "The answer becomes spoken audio.", technology: `OpenAI · ${voiceModels.speech}`, metricLabel: "First audio bytes", placeholderLatency: "— ms", status: "idle", icon: MessageSquareText },
   { id: "assistant-audio", label: "Assistant Audio", shortLabel: "Speak", description: "The listener hears the response.", technology: "Streaming PCM · Web Audio API", metricLabel: "Duration", placeholderLatency: "— ms", status: "idle", icon: Speech },
@@ -15,3 +15,12 @@ export const realtimeStages: PipelineStageDefinition[] = [
   { id: "realtime-model", label: "Realtime Model", shortLabel: "Listen · Reason · Speak", description: "One multimodal model works directly with audio in and audio out.", technology: `OpenAI · ${voiceModels.realtime} + web search`, metricLabel: "Latency", placeholderLatency: "— ms", status: "idle", icon: Radio },
   { id: "assistant-audio", label: "Assistant Audio", shortLabel: "Respond", description: "Voice returns over the same live connection.", technology: "WebRTC audio stream", metricLabel: "Duration", placeholderLatency: "— ms", status: "idle", icon: Speech },
 ];
+
+export const liveStages: PipelineStageDefinition[] = [
+  { id: "user-audio", label: "Continuous Microphone", shortLabel: "Listen continuously", description: "Input stays active while the assistant speaks.", technology: "WebRTC · echo cancellation", metricLabel: "Duration", placeholderLatency: "— ms", status: "ready", icon: AudioLines },
+  { id: "live-model", label: "Full-duplex Voice Model", shortLabel: "Listen + speak", description: "Listening and speaking overlap; captions are independent timed streams.", technology: `OpenAI · ${voiceModels.live}`, metricLabel: "Session duration", placeholderLatency: "— ms", status: "idle", icon: Radio },
+  { id: "live-backend", label: "Delegated Backend", shortLabel: "Reason + tools", description: "Backend work runs while the voice conversation continues.", technology: `Responses · ${voiceModels.liveBackend} + web search`, metricLabel: "Latency", placeholderLatency: "— ms", status: "idle", icon: BrainCircuit },
+  { id: "assistant-audio", label: "Continuous Assistant Audio", shortLabel: "Speak continuously", description: "Remote media plays without muting the microphone.", technology: "WebRTC audio track", metricLabel: "Duration", placeholderLatency: "— ms", status: "idle", icon: Speech },
+];
+
+export const pipelines = { cascaded: cascadedStages, realtime: realtimeStages, live: liveStages };

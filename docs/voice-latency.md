@@ -1,39 +1,56 @@
-# Voice streaming and latency
+# Three voice architectures
 
-The demo keeps its existing models. Cascaded mode now streams LLM text to the browser as newline-delimited JSON (`text`, `done`, `error`). Complete sentences enter an ordered speech queue immediately. Unpunctuated spans are capped at 240 characters. Common abbreviations and decimals stay together; sentence segmentation is heuristic, so test your languages and domain vocabulary.
+The demo keeps three selectable modes and uses the current API contracts checked on 2026-10-04.
 
-`/api/speak` forwards OpenAI's raw mono PCM response (24 kHz, signed 16-bit little-endian) without buffering the complete body. The browser handles network chunks that split a PCM sample, schedules 100 ms audio buffers, and keeps approximately one second scheduled ahead. Each sentence's synthesis starts after the preceding sentence's stream has been consumed, while its audio can still be playing. This bounds memory and preserves ordering without launching a request per token.
+## Cascaded: live transcription → GLM → streaming TTS
 
-The silence threshold is 600 ms, down from 1,100 ms, in `config/models.ts`. This removes 500 ms of configured endpointing delay, but can end a turn prematurely for speakers who pause between words. Increase it if conversational testing shows cutoffs. Microphone echo cancellation and noise suppression are requested where supported. Input transcription still receives a completed recording; it is not streaming STT.
+One persistent WebRTC transcription session sends microphone audio to `gpt-live-transcribe` while the user speaks. The browser runs Silero VAD v6 through `@ricky0123/vad-web`; ONNX and worklet assets load from versioned CDN URLs. Model loading affects first-session startup, not each turn. Echo cancellation, noise suppression, and automatic gain control are requested where supported.
+
+`gpt-live-transcribe` does not support `server_vad` or `semantic_vad`. Client VAD commits a turn after 400 ms of non-speech; it rejects very short misfires and limits a speaking turn to 30 seconds. A shorter silence interval can cut off slow speakers, so tune it using real conversations. VAD identifies speech, not semantic completion. No WAV upload is used in the active demo. `/api/transcribe` remains available for completed files.
+
+Partial transcripts are displayed but never submitted speculatively to GLM. Final transcripts enter the separate Baseten `zai-org/GLM-4.7` response route. The actual provider request explicitly sets `chat_template_args.enable_thinking = false`, avoiding hidden reasoning before conversational output. This trades deep reasoning for response speed without changing the model.
+
+The opening clause (at least 24 characters) or roughly 100-character opening phrase can start TTS before the full first sentence. Later sentences use the existing 240-character cap and preserve decimal/abbreviation handling. Short sentences still start immediately at their complete boundary. PCM is streamed at 24 kHz, signed 16-bit little-endian, with 100 ms scheduling buffers and about one second maximum playback lead. Requests stay ordered; cancellation stops all queued work. Phrase-level TTS may change prosody and adds provider calls.
+
+Input is paused during response playback and resumes immediately afterward on the same connection. This mode is still half duplex. Full-duplex cascaded barge-in requires a separate orchestration design; this implementation does not claim it.
+
+## Native Realtime: audio → gpt-realtime-2.1 → audio
+
+The original native demo stays available. It uses WebRTC, minimal reasoning, eager semantic VAD (`eagerness: high`), and model-managed interruptions. Eagerness reduces endpoint waiting but increases the chance of responding during a long pause. Current-fact questions still use the demo's web-search function.
+
+WebRTC output-buffer events, rather than transcript-done or response-done events, drive playback-stage status. Generation finishing does not mean the remote audio has finished playing. Native Realtime interruption support is different from GPT-Live's simultaneous listening and speaking.
+
+## GPT-Live: full-duplex voice + delegated backend
+
+The third demo creates `gpt-live-1` through `POST /v1/live/sessions`, with WebRTC transport and managed Responses delegation to `gpt-6-luna` using low reasoning effort and hosted web search. API credentials stay on Vercel. The server returns the opaque session ID and negotiated SDP answer. The client gathers ICE candidates and waits for `session.started`; it does not send Realtime commands or a second `session.start`.
+
+Input stays active while remote audio plays. User and assistant captions update independently using `session.input_transcript.delta` and `session.output_transcript.delta`, preserving their exact spaces and session timestamps. There is no completed-turn event. Chat bubbles group nearby fragments for display only; they are not a record of completed spoken turns. Backend events are nested in `response.event` and can continue alongside conversation.
+
+End conversation sends `session.close`, waits for `session.closed` and final voice usage, and then closes media. A 15-second timeout releases resources and reports unconfirmed final usage. New conversation, mode changes, or navigation send close where possible but release immediately; they do not claim confirmed usage. Voice usage is billed by session duration, and backend usage separately. This OpenAI project must have access to GPT-Live and the backend model; the UI reports access failures without silently substituting another mode.
 
 ## Measurements
 
-- **Speech-to-text latency:** browser request time to response headers.
-- **First text:** response request through the first generated text delta.
-- **First audio bytes:** first sentence's TTS request through its first nonempty PCM chunk.
-- **Time to first audio:** detected silence onset (or keyboard submission) through scheduled playback start, including endpointing, transcription, network waits, and the initial audio buffer. This is a browser estimate, not a measurement at the speaker hardware.
-- **Assistant audio duration:** duration calculated from played/scheduled PCM samples, excluding network gaps.
+Cascaded metrics are transcription finalization after commit, first model text, first TTS bytes, and detected end-of-speech to scheduled first playback. Transcription finalization excludes work already done while speaking. Audio duration is calculated from PCM samples and is not processing latency.
 
-These stages overlap, so do not sum first-text and TTS metrics to infer total turn latency. Compare actual first-audio timings over repeated short/long turns, both warm and cold requests, using the same device and network. Report median and p95. No measured provider latency improvement is claimed until tested against live credentials.
+Realtime processing timing begins at the received speech-stopped event and ends at the server's output-buffer-started event; it excludes endpoint detection and is not a hardware speaker measurement. GPT-Live displays cumulative voice session duration and delegated backend latency, rather than inventing turn-based first-audio numbers for overlapping speech. Caption timing is not audio playback timing.
 
-## Cancellation and failures
+Compare warm and cold sessions, first-audio median and p95, cutoff rate, interruptions, and noisy environments on the same device/network. No measured latency improvement is claimed without live audio measurements.
 
-End conversation, New conversation, architecture changes, and unmount cancel the current work and stop queued audio. Partial network responses require an explicit successful completion event. Empty model answers may retry once; a partially emitted answer never automatically retries. If synthesis fails, partial text remains visible but is not added to completed conversation history. The user can start a fresh turn.
+## When LiveKit or Pipecat is useful
 
-Sentence-level TTS can introduce prosody changes between sentences and more provider requests. Tune chunk length against first-audio latency and naturalness. Cascaded mode remains half-duplex: it resumes microphone recording after playback. Native WebRTC mode supports model-managed interruptions.
+Neither framework is needed for these direct browser-to-OpenAI connections. WebRTC is media transport; VAD is speech detection; the separate reasoning model defines the cascade.
 
-## WebRTC, LiveKit, and Pipecat
+Use LiveKit Agents for a larger TypeScript/Python service needing rooms, telephony, agent workers, provider switching, and coordinated streaming interruption behavior. Use Pipecat for a Python audio pipeline with multiple transports/providers and explicit processing stages. These normally require an agent service running independently of short-lived Vercel requests. A framework does not automatically make batch transcription or fully buffered TTS fast.
 
-The existing speech-to-speech mode already connects the browser directly to OpenAI over WebRTC, with server-side session setup and API credentials. Keep that mode as the reference for fluid conversation. WebRTC supplies media transport; it does not by itself remove buffering in an STT → LLM → TTS application.
+## References
 
-For this classroom demo, retain the existing Next.js deployment and implement streaming directly. Migrating frameworks now adds deployment and operational work beyond the observed buffering problem.
-
-For a production cascaded service requiring full-duplex audio, robust interruption handling, streaming STT, telephony, and provider switching, evaluate **LiveKit Agents** first for this TypeScript codebase. It has Node.js agents and WebRTC clients, but requires an agent server and LiveKit Cloud or a self-hosted media service. **Pipecat** is a strong alternative for a Python-based pipeline, also requiring a running bot service and transport. Neither framework has been installed or provisioned in this change.
-
-Before production, address authentication and rate limits on provider-backed endpoints, session cost limits, provider timeouts, reconnect behavior, turn detection in noise, and telemetry without raw audio/transcript logging by default.
-
-References:
-- https://developers.openai.com/api/docs/guides/text-to-speech
+- https://developers.openai.com/api/docs/guides/realtime-transcription
 - https://developers.openai.com/api/docs/guides/realtime-vad
-- https://docs.livekit.io/agents/start/voice-ai/
-- https://docs.pipecat.ai/pipecat/deployment/overview
+- https://developers.openai.com/api/docs/guides/voice-webrtc
+- https://developers.openai.com/api/docs/guides/live
+- https://developers.openai.com/api/docs/guides/live-conversations
+- https://developers.openai.com/api/docs/guides/live-delegation
+- https://www.baseten.co/library/glm-4-7/
+- https://docs.vad.ricky0123.com/user-guide/browser/
+- https://docs.livekit.io/agents/
+- https://docs.pipecat.ai/

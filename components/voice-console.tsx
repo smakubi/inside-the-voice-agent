@@ -6,12 +6,14 @@ import { ArchitectureToggle } from "@/components/architecture-toggle";
 import { CodeInspector } from "@/components/code-inspector";
 import { PipelineView } from "@/components/pipeline/pipeline-view";
 import { getCodeSnippet } from "@/config/code-snippets";
-import { voiceDefaults } from "@/config/models";
+import { CascadedInput } from "@/lib/cascaded-input";
+import { LiveTranscript } from "@/lib/live-transcript";
+import { waitForIce, waitForVoiceSession } from "@/lib/webrtc";
 import { PcmPlayer } from "@/lib/pcm-player";
 import { runStreamedVoice } from "@/lib/streamed-voice";
 import type { ArchitectureMode } from "@/types/pipeline";
 
-export type VoiceStage = "idle" | "connecting" | "listening" | "transcribing" | "thinking" | "speaking" | "error";
+export type VoiceStage = "idle" | "connecting" | "listening" | "transcribing" | "thinking" | "speaking" | "closing" | "error";
 
 export interface ConversationMessage {
   role: "user" | "assistant";
@@ -45,16 +47,9 @@ const stageCopy: Record<VoiceStage, string> = {
   transcribing: "Transcribing your message…",
   thinking: "Preparing a response…",
   speaking: "Responding…",
+  closing: "Finishing the live session…",
   error: "The session stopped. You can try again.",
 };
-
-const silenceThreshold = 0.025;
-const silenceDurationMs = voiceDefaults.silenceDurationMs;
-
-function supportedMimeType() {
-  const options = ["audio/webm;codecs=opus", "audio/webm", "audio/mp4"];
-  return options.find((type) => MediaRecorder.isTypeSupported(type)) ?? "";
-}
 
 async function readError(response: Response) {
   const body = (await response.json().catch(() => null)) as { error?: string } | null;
@@ -63,6 +58,8 @@ async function readError(response: Response) {
 
 export function VoiceConsole({ architecture, onArchitectureChange }: Props) {
   const [stage, setStage] = useState<VoiceStage>("idle");
+  const [inputTranscript, setInputTranscript] = useState("");
+  const [liveBackendBusy, setLiveBackendBusy] = useState(false);
   const [streamingText, setStreamingText] = useState("");
   const [messages, setMessages] = useState<ConversationMessage[]>([]);
   const [timings, setTimings] = useState<Record<string, number>>({});
@@ -72,29 +69,25 @@ export function VoiceConsole({ architecture, onArchitectureChange }: Props) {
   const [sessionActive, setSessionActive] = useState(false);
   const [selectedStageId, setSelectedStageId] = useState<string>();
   const messagesRef = useRef<ConversationMessage[]>([]);
-  const recorderRef = useRef<MediaRecorder | null>(null);
+  const cascadedInputRef = useRef<CascadedInput | null>(null);
+  const liveActiveRef = useRef(false);
+  const liveClosingRef = useRef(false);
+  const liveCloseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const liveTranscriptRef = useRef(new LiveTranscript());
+  const liveHistoryRef = useRef<ConversationMessage[]>([]);
+  const liveDelegationsRef = useRef(new Map<string, number>());
   const streamRef = useRef<MediaStream | null>(null);
-  const chunksRef = useRef<Blob[]>([]);
-  const analyserRef = useRef<AnalyserNode | null>(null);
-  const audioContextRef = useRef<AudioContext | null>(null);
-  const animationFrameRef = useRef<number | null>(null);
-  const turnTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const playerRef = useRef<PcmPlayer | null>(null);
-  const resumeTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const endOfSpeechAtRef = useRef<number | null>(null);
   const turnIdRef = useRef(0);
   const peerConnectionRef = useRef<RTCPeerConnection | null>(null);
   const dataChannelRef = useRef<RTCDataChannel | null>(null);
   const remoteAudioRef = useRef<HTMLAudioElement | null>(null);
-  const recordingStartedAtRef = useRef<number | null>(null);
   const realtimeSpeechStartedAtRef = useRef<number | null>(null);
   const realtimeResponseStartedAtRef = useRef<number | null>(null);
   const realtimeAudioStartedAtRef = useRef<number | null>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
   const sessionActiveRef = useRef(false);
-  const shouldProcessRef = useRef(false);
-  const speechDetectedRef = useRef(false);
-  const silenceStartedRef = useRef<number | null>(null);
   const safetyIdentifierRef = useRef("");
   const transcriptEndRef = useRef<HTMLDivElement | null>(null);
 
@@ -103,14 +96,11 @@ export function VoiceConsole({ architecture, onArchitectureChange }: Props) {
     safetyIdentifierRef.current = window.crypto.randomUUID();
     return () => {
       sessionActiveRef.current = false;
-      if (animationFrameRef.current !== null) cancelAnimationFrame(animationFrameRef.current);
-      if (turnTimeoutRef.current) clearTimeout(turnTimeoutRef.current);
-      shouldProcessRef.current = false;
-      if (recorderRef.current?.state === "recording") recorderRef.current.stop();
+      cascadedInputRef.current?.close();
       streamRef.current?.getTracks().forEach((track) => track.stop());
-      void audioContextRef.current?.close();
+      if (liveCloseTimerRef.current) clearTimeout(liveCloseTimerRef.current);
+      if (liveActiveRef.current && dataChannelRef.current?.readyState === "open") dataChannelRef.current.send(JSON.stringify({ type: "session.close" }));
       turnId.current++;
-      if (resumeTimeoutRef.current) clearTimeout(resumeTimeoutRef.current);
       void playerRef.current?.close();
       dataChannelRef.current?.close();
       peerConnectionRef.current?.close();
@@ -138,32 +128,24 @@ export function VoiceConsole({ architecture, onArchitectureChange }: Props) {
     return playerRef.current;
   }
 
-  function clearTurnMonitoring() {
-    if (resumeTimeoutRef.current) clearTimeout(resumeTimeoutRef.current);
-    resumeTimeoutRef.current = null;
-    if (animationFrameRef.current !== null) cancelAnimationFrame(animationFrameRef.current);
-    if (turnTimeoutRef.current) clearTimeout(turnTimeoutRef.current);
-    animationFrameRef.current = null;
-    turnTimeoutRef.current = null;
-  }
-
   function releaseSessionResources() {
     sessionActiveRef.current = false;
-    clearTurnMonitoring();
-    shouldProcessRef.current = false;
-    if (recorderRef.current?.state === "recording") recorderRef.current.stop();
-    recorderRef.current = null;
+    cascadedInputRef.current?.close();
+    cascadedInputRef.current = null;
     streamRef.current?.getTracks().forEach((track) => track.stop());
     streamRef.current = null;
-    void audioContextRef.current?.close();
-    audioContextRef.current = null;
-    analyserRef.current = null;
     void playerRef.current?.close();
     playerRef.current = null;
-    recordingStartedAtRef.current = null;
     realtimeSpeechStartedAtRef.current = null;
     realtimeResponseStartedAtRef.current = null;
     realtimeAudioStartedAtRef.current = null;
+    if (liveCloseTimerRef.current) clearTimeout(liveCloseTimerRef.current);
+    liveCloseTimerRef.current = null;
+    liveActiveRef.current = false;
+    liveClosingRef.current = false;
+    liveDelegationsRef.current.clear();
+    setLiveBackendBusy(false);
+    setInputTranscript("");
     dataChannelRef.current?.close();
     dataChannelRef.current = null;
     peerConnectionRef.current?.close();
@@ -175,7 +157,23 @@ export function VoiceConsole({ architecture, onArchitectureChange }: Props) {
     }
   }
 
-  function endConversation() {
+  function endConversation(force = false) {
+    const channel = dataChannelRef.current;
+    if (!force && liveActiveRef.current && channel?.readyState === "open") {
+      if (liveClosingRef.current) return;
+      liveClosingRef.current = true;
+      streamRef.current?.getTracks().forEach((track) => { track.enabled = false; });
+      updateStage("closing");
+      channel.send(JSON.stringify({ type: "session.close" }));
+      liveCloseTimerRef.current = setTimeout(() => {
+        releaseSessionResources();
+        setSessionActive(false);
+        setError("The connection closed before final usage was confirmed.");
+        updateStage("idle");
+      }, 15_000);
+      return;
+    }
+    if (liveActiveRef.current && channel?.readyState === "open") channel.send(JSON.stringify({ type: "session.close" }));
     turnIdRef.current++;
     setStreamingText("");
     abortControllerRef.current?.abort();
@@ -188,7 +186,7 @@ export function VoiceConsole({ architecture, onArchitectureChange }: Props) {
   }
 
   function startNewConversation() {
-    endConversation();
+    endConversation(true);
     messagesRef.current = [];
     setMessages([]);
     setTimings({});
@@ -196,6 +194,8 @@ export function VoiceConsole({ architecture, onArchitectureChange }: Props) {
   }
 
   function failSession(message: string) {
+    turnIdRef.current++;
+    abortControllerRef.current?.abort();
     releaseSessionResources();
     setSessionActive(false);
     setError(message);
@@ -204,30 +204,20 @@ export function VoiceConsole({ architecture, onArchitectureChange }: Props) {
 
   function handleArchitectureChange(nextArchitecture: ArchitectureMode) {
     if (nextArchitecture === architecture) return;
-    endConversation();
+    endConversation(true);
     setSelectedStageId(undefined);
     setError("");
     onArchitectureChange(nextArchitecture);
   }
 
-  async function measured<T>(name: string, action: () => Promise<T>) {
-    const startedAt = performance.now();
-    try {
-      return await action();
-    } finally {
-      setTimings((current) => ({ ...current, [name]: Math.round(performance.now() - startedAt) }));
-    }
-  }
-
   function resumeListening() {
-    const stream = streamRef.current;
-    if (sessionActiveRef.current && stream?.active) {
-      resumeTimeoutRef.current = setTimeout(() => {
-        if (streamRef.current === stream) beginListening(stream);
-      }, 100);
-    } else {
-      updateStage("idle");
-    }
+    const input = cascadedInputRef.current;
+    if (sessionActiveRef.current && input) {
+      setInputTranscript("");
+      void input.resume().then(() => {
+        if (cascadedInputRef.current === input) updateStage("listening");
+      }).catch(() => { if (cascadedInputRef.current === input) failSession("Microphone capture stopped. Reconnect to continue."); });
+    } else updateStage("idle");
   }
 
   async function generateResponse(userText: string, continuous: boolean) {
@@ -292,99 +282,6 @@ export function VoiceConsole({ architecture, onArchitectureChange }: Props) {
     }
   }
 
-  async function processRecording(blob: Blob) {
-    updateStage("transcribing");
-    const controller = new AbortController();
-    abortControllerRef.current = controller;
-
-    try {
-      const formData = new FormData();
-      const extension = blob.type.includes("mp4") ? "m4a" : "webm";
-      formData.append("audio", blob, `recording.${extension}`);
-      const response = await measured("speech-to-text", () =>
-        fetch("/api/transcribe", { method: "POST", body: formData, signal: controller.signal }),
-      );
-      if (!response.ok) throw new Error(await readError(response));
-      const { text } = (await response.json()) as { text: string };
-      controller.signal.throwIfAborted();
-      if (!text) {
-        resumeListening();
-        return;
-      }
-      await generateResponse(text, true);
-    } catch (caughtError) {
-      if (caughtError instanceof DOMException && caughtError.name === "AbortError") return;
-      setError(caughtError instanceof Error ? caughtError.message : "I couldn't process that recording.");
-      endConversation();
-    } finally {
-      if (abortControllerRef.current === controller) abortControllerRef.current = null;
-    }
-  }
-
-  function finishTurn(shouldProcess: boolean) {
-    clearTurnMonitoring();
-    endOfSpeechAtRef.current = silenceStartedRef.current ?? performance.now();
-    if (shouldProcess && recordingStartedAtRef.current !== null) {
-      setTimings((current) => ({ ...current, "user-audio": Math.round(performance.now() - recordingStartedAtRef.current!) }));
-    }
-    recordingStartedAtRef.current = null;
-    shouldProcessRef.current = shouldProcess;
-    if (recorderRef.current?.state === "recording") recorderRef.current.stop();
-  }
-
-  function monitorAudio() {
-    const analyser = analyserRef.current;
-    if (!analyser || !sessionActiveRef.current) return;
-    const samples = new Uint8Array(analyser.fftSize);
-    analyser.getByteTimeDomainData(samples);
-    let sum = 0;
-    for (const sample of samples) {
-      const normalized = (sample - 128) / 128;
-      sum += normalized * normalized;
-    }
-    const volume = Math.sqrt(sum / samples.length);
-    const now = performance.now();
-
-    if (volume > silenceThreshold) {
-      speechDetectedRef.current = true;
-      silenceStartedRef.current = null;
-    } else if (speechDetectedRef.current) {
-      silenceStartedRef.current ??= now;
-      if (now - silenceStartedRef.current >= silenceDurationMs) {
-        finishTurn(true);
-        return;
-      }
-    }
-
-    animationFrameRef.current = requestAnimationFrame(monitorAudio);
-  }
-
-  function beginListening(stream: MediaStream) {
-    if (!sessionActiveRef.current || !stream.active) return;
-    chunksRef.current = [];
-    speechDetectedRef.current = false;
-    silenceStartedRef.current = null;
-    shouldProcessRef.current = false;
-    const mimeType = supportedMimeType();
-    const recorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
-    recorderRef.current = recorder;
-    recordingStartedAtRef.current = performance.now();
-    recorder.ondataavailable = (event) => {
-      if (event.data.size) chunksRef.current.push(event.data);
-    };
-    recorder.onstop = () => {
-      const shouldProcess = shouldProcessRef.current;
-      const blob = new Blob(chunksRef.current, { type: recorder.mimeType || "audio/webm" });
-      recorderRef.current = null;
-      if (shouldProcess && blob.size) void processRecording(blob);
-      else if (sessionActiveRef.current) beginListening(stream);
-    };
-    recorder.start();
-    updateStage("listening");
-    monitorAudio();
-    turnTimeoutRef.current = setTimeout(() => finishTurn(speechDetectedRef.current), voiceDefaults.maxRecordingMs);
-  }
-
   async function runRealtimeWebSearch(functionCall: RealtimeFunctionCall) {
     const dataChannel = dataChannelRef.current;
     if (!dataChannel || dataChannel.readyState !== "open") return;
@@ -437,6 +334,39 @@ export function VoiceConsole({ architecture, onArchitectureChange }: Props) {
     updateStage("speaking");
   }
 
+  function handleLiveEvent(messageEvent: MessageEvent<string>) {
+    let event;
+    try { event = JSON.parse(messageEvent.data); } catch { return; }
+    if (event.type === "session.started") updateStage("listening");
+    if (event.type === "session.input_transcript.delta" || event.type === "session.output_transcript.delta") {
+      const role = event.type === "session.input_transcript.delta" ? "user" : "assistant";
+      const captions = liveTranscriptRef.current.push(role, event.delta ?? "", event.start_ms, event.end_ms);
+      const next = [...liveHistoryRef.current, ...captions];
+      messagesRef.current = next;
+      setMessages(next);
+      // Transcript timing is not audio playback timing or a completed turn.
+    }
+    if (event.type === "session.delegation.created") {
+      liveDelegationsRef.current.set(event.delegation_id, performance.now());
+      setLiveBackendBusy(true);
+    }
+    if (event.type === "response.event" && ["response.completed", "response.failed", "response.incomplete"].includes(event.event?.type)) {
+      const started = liveDelegationsRef.current.get(event.delegation_id);
+      if (started !== undefined) setTimings((previous) => ({ ...previous, "live-backend": Math.round(performance.now() - started) }));
+      liveDelegationsRef.current.delete(event.delegation_id);
+      setLiveBackendBusy(liveDelegationsRef.current.size > 0);
+    }
+    if (event.type === "session.usage.updated" || event.type === "session.closed") {
+      if (typeof event.usage?.seconds === "number") setTimings((previous) => ({ ...previous, "live-model": Math.round(event.usage.seconds * 1000) }));
+    }
+    if (event.type === "session.closed") {
+      releaseSessionResources();
+      setSessionActive(false);
+      updateStage("idle");
+    }
+    if (event.type === "error") failSession(event.error?.message ?? "The GPT-Live session stopped unexpectedly.");
+  }
+
   function handleRealtimeEvent(messageEvent: MessageEvent<string>) {
     let event: RealtimeServerEvent;
     try {
@@ -459,26 +389,25 @@ export function VoiceConsole({ architecture, onArchitectureChange }: Props) {
       updateStage("thinking");
     }
     if (event.type === "response.created") updateStage("thinking");
-    if (event.type === "response.output_audio.delta" || event.type === "response.output_audio_transcript.delta") markRealtimeAudioStarted();
+    if (event.type === "output_audio_buffer.started") markRealtimeAudioStarted();
+    if (event.type === "output_audio_buffer.stopped" || event.type === "output_audio_buffer.cleared") finishRealtimeAudio();
     if (event.type === "conversation.item.input_audio_transcription.completed" && event.transcript?.trim()) {
       appendMessage({ role: "user", content: event.transcript.trim() });
     }
     if (event.type === "response.output_audio_transcript.done") {
       if (event.transcript?.trim()) appendMessage({ role: "assistant", content: event.transcript.trim() });
-      finishRealtimeAudio();
     }
-    if (event.type === "response.output_audio.done") finishRealtimeAudio();
     if (event.type === "response.done") {
       const functionCall = event.response?.output?.find((item) => item.type === "function_call" && item.name === "web_search");
       if (functionCall) {
         updateStage("thinking");
         void runRealtimeWebSearch(functionCall);
-      } else finishRealtimeAudio();
+      }
     }
     if (event.type === "error") failSession(event.error?.message ?? "The realtime session stopped unexpectedly.");
   }
 
-  async function startRealtimeConversation() {
+  async function startRealtimeConversation(useLive = false) {
     if (!navigator.mediaDevices?.getUserMedia || typeof RTCPeerConnection === "undefined") {
       setShowTextInput(true);
       setError("This browser does not support a realtime voice connection.");
@@ -492,20 +421,24 @@ export function VoiceConsole({ architecture, onArchitectureChange }: Props) {
     const current = () => turnIdRef.current === startupId && !controller.signal.aborted;
     updateStage("connecting");
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } });
       if (!current()) { stream.getTracks().forEach((track) => track.stop()); return; }
       const peerConnection = new RTCPeerConnection();
       const remoteAudio = new Audio();
       remoteAudio.autoplay = true;
-      remoteAudio.onplaying = markRealtimeAudioStarted;
       remoteAudioRef.current = remoteAudio;
       streamRef.current = stream;
       peerConnectionRef.current = peerConnection;
       sessionActiveRef.current = true;
+      liveActiveRef.current = useLive;
+      if (useLive) {
+        liveTranscriptRef.current = new LiveTranscript();
+        liveHistoryRef.current = [...messagesRef.current];
+      }
       setSessionActive(true);
 
       peerConnection.ontrack = (event) => {
-        remoteAudio.srcObject = event.streams[0];
+        remoteAudio.srcObject = new MediaStream([event.track]);
         void remoteAudio.play().catch(() => setError("Audio playback was blocked. Allow autoplay to hear the assistant."));
       };
       peerConnection.onconnectionstatechange = () => {
@@ -517,25 +450,36 @@ export function VoiceConsole({ architecture, onArchitectureChange }: Props) {
 
       const dataChannel = peerConnection.createDataChannel("oai-events");
       dataChannelRef.current = dataChannel;
-      dataChannel.addEventListener("message", (event) => { if (current()) handleRealtimeEvent(event); });
+      const ready = waitForVoiceSession(dataChannel, useLive, controller.signal);
+      // SDP exchange can fail before we reach the readiness await.
+      void ready.catch(() => {});
+      dataChannel.addEventListener("message", (event) => { if (peerConnectionRef.current === peerConnection) { if (useLive) handleLiveEvent(event); else handleRealtimeEvent(event); } });
       dataChannel.addEventListener("open", () => {
-        if (current()) updateStage("listening");
+        if (current() && !useLive) updateStage("listening");
+      });
+      dataChannel.addEventListener("close", () => {
+        if (peerConnectionRef.current !== peerConnection || !sessionActiveRef.current) return;
+        failSession(useLive
+          ? "The GPT-Live connection closed before final usage was confirmed. Reconnect to continue."
+          : "The realtime connection closed. Reconnect to continue.");
       });
 
       const offer = await peerConnection.createOffer();
       if (!current()) return;
       await peerConnection.setLocalDescription(offer);
       if (!current()) return;
-      const response = await fetch("/api/realtime/session", {
+      if (useLive) await waitForIce(peerConnection, controller.signal);
+      const response = await fetch(useLive ? "/api/live/session" : "/api/realtime/session", {
         method: "POST",
         headers: { "Content-Type": "application/sdp" },
-        body: offer.sdp,
+        body: peerConnection.localDescription?.sdp ?? offer.sdp,
         signal: controller.signal,
       });
       if (!response.ok) throw new Error(await readError(response));
-      const answer = await response.text();
+      const answer = useLive ? (await response.json()).transport.sdp : await response.text();
       if (!current()) return;
       await peerConnection.setRemoteDescription({ type: "answer", sdp: answer });
+      await ready;
     } catch (caughtError) {
       if (current()) failSession(caughtError instanceof Error ? caughtError.message : "The realtime session could not be started.");
     } finally {
@@ -545,41 +489,57 @@ export function VoiceConsole({ architecture, onArchitectureChange }: Props) {
 
   async function startCascadedConversation() {
     setError("");
-    if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === "undefined") {
+    if (!navigator.mediaDevices?.getUserMedia || typeof RTCPeerConnection === "undefined") {
       setShowTextInput(true);
-      setError("This browser cannot record audio. Type your message instead.");
+      setError("This browser cannot stream microphone audio. Type your message instead.");
       return;
     }
-
     const startupId = ++turnIdRef.current;
+    const controller = new AbortController();
+    abortControllerRef.current = controller;
     updateStage("connecting");
     try {
       await getPlayer().start();
       if (turnIdRef.current !== startupId) return;
       const stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } });
       if (turnIdRef.current !== startupId) { stream.getTracks().forEach((track) => track.stop()); return; }
-      const audioContext = new AudioContext();
-      const analyser = audioContext.createAnalyser();
-      analyser.fftSize = 2_048;
-      audioContext.createMediaStreamSource(stream).connect(analyser);
       streamRef.current = stream;
-      audioContextRef.current = audioContext;
-      analyserRef.current = analyser;
+      const input = new CascadedInput({
+        onSpeechStart: () => { if (cascadedInputRef.current === input) { setTimings({}); updateStage("listening"); } },
+        onSpeechEnd: (endedAt, durationMs) => {
+          if (cascadedInputRef.current !== input) return;
+          endOfSpeechAtRef.current = endedAt;
+          setTimings((previous) => ({ ...previous, "user-audio": Math.round(durationMs) }));
+          updateStage("transcribing");
+        },
+        onPartial: (text) => { if (cascadedInputRef.current === input) setInputTranscript(text); },
+        onTranscript: (text, latency) => {
+          if (cascadedInputRef.current !== input || !sessionActiveRef.current) return;
+          setInputTranscript("");
+          setTimings((previous) => ({ ...previous, "speech-to-text": Math.round(latency) }));
+          if (text) void generateResponse(text, true);
+          else resumeListening();
+        },
+        onError: (message) => { if (cascadedInputRef.current === input) failSession(message); },
+      });
+      cascadedInputRef.current = input;
+      await input.connect(stream, controller.signal);
+      if (turnIdRef.current !== startupId) return;
       sessionActiveRef.current = true;
       setSessionActive(true);
-      beginListening(stream);
-    } catch {
-      if (turnIdRef.current !== startupId) return;
-      releaseSessionResources();
+      updateStage("listening");
+    } catch (caughtError) {
+      if (turnIdRef.current !== startupId || controller.signal.aborted) return;
+      failSession(caughtError instanceof Error ? caughtError.message : "Microphone access was blocked. Allow it in your browser or type instead.");
       setShowTextInput(true);
-      setError("Microphone access was blocked. Allow it in your browser or type instead.");
-      updateStage("error");
+    } finally {
+      if (abortControllerRef.current === controller) abortControllerRef.current = null;
     }
   }
 
   function startConversation() {
     setError("");
-    if (architecture === "realtime") void startRealtimeConversation();
+    if (architecture === "realtime" || architecture === "live") void startRealtimeConversation(architecture === "live");
     else void startCascadedConversation();
   }
 
@@ -606,7 +566,7 @@ export function VoiceConsole({ architecture, onArchitectureChange }: Props) {
   }
 
   const conversationBusy = sessionActive || ["connecting", "transcribing", "thinking", "speaking"].includes(stage);
-  const textBusy = architecture === "realtime" ? dataChannelRef.current?.readyState !== "open" : !["idle", "error"].includes(stage);
+  const textBusy = architecture === "live" ? true : architecture === "realtime" ? !sessionActive || stage === "connecting" : !["idle", "error"].includes(stage);
   const selectedSnippet = selectedStageId ? getCodeSnippet(architecture, selectedStageId) : undefined;
 
   return (
@@ -617,13 +577,13 @@ export function VoiceConsole({ architecture, onArchitectureChange }: Props) {
           <div>
             <p className="text-sm font-medium text-blue-700">Conversation</p>
             <h2 className="mt-1 text-2xl font-semibold tracking-[-0.03em] text-slate-950">Speak naturally</h2>
-            <p className="mt-2 max-w-xl text-sm leading-6 text-slate-500">{architecture === "cascaded" ? "Start once, then talk normally. A short pause sends your turn, and the microphone resumes after each answer." : "Start once for a continuous, low-latency conversation over WebRTC."} The agent remembers earlier turns until you start a new conversation.</p>
+            <p className="mt-2 max-w-xl text-sm leading-6 text-slate-500">{architecture === "cascaded" ? "Audio streams to transcription while you speak. VAD sends your turn after a short pause; the microphone resumes after each answer." : architecture === "live" ? "Full duplex: keep speaking while the assistant talks. Input and output captions update independently." : "Start once for a continuous conversation over WebRTC, with eager turn detection and interruptions."} Conversation context is retained during the active session.</p>
           </div>
           <button type="button" onClick={startNewConversation} className="inline-flex shrink-0 items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-600 transition hover:border-slate-300 hover:text-slate-950"><Plus className="size-3.5" />New conversation</button>
         </div>
 
         <div className="mt-6 flex-1 overflow-y-auto rounded-2xl bg-slate-50 p-4 sm:p-5" aria-label="Conversation transcript">
-          {messages.length || streamingText ? (
+          {messages.length || streamingText || inputTranscript ? (
             <div className="space-y-4">
               {messages.map((message, index) => (
                 <div key={`${message.role}-${index}`} className={`flex ${message.role === "user" ? "justify-end" : "justify-start"}`}>
@@ -632,7 +592,8 @@ export function VoiceConsole({ architecture, onArchitectureChange }: Props) {
                   </div>
                 </div>
               ))}
-              {streamingText ? <div className="max-w-[88%] rounded-2xl rounded-bl-md bg-white px-4 py-3 text-sm leading-6 text-slate-800 shadow-sm ring-1 ring-slate-200" aria-label="Streaming assistant response">{streamingText}</div> : null}
+              {inputTranscript ? <p className="ml-auto max-w-[88%] rounded-xl bg-blue-50 px-4 py-3 text-sm text-blue-900" aria-live="polite">{inputTranscript}<span className="ml-2 text-xs text-blue-500">Live transcript</span></p> : null}
+            {streamingText ? <div className="max-w-[88%] rounded-2xl rounded-bl-md bg-white px-4 py-3 text-sm leading-6 text-slate-800 shadow-sm ring-1 ring-slate-200" aria-label="Streaming assistant response">{streamingText}</div> : null}
               <div ref={transcriptEndRef} />
             </div>
           ) : (
@@ -641,13 +602,14 @@ export function VoiceConsole({ architecture, onArchitectureChange }: Props) {
         </div>
 
         <div className="mt-6 text-center">
-          <button type="button" onClick={conversationBusy ? endConversation : startConversation} aria-label={conversationBusy ? "End conversation" : "Start conversation"} className={`mx-auto grid size-20 place-items-center rounded-full text-white shadow-lg transition hover:-translate-y-0.5 ${conversationBusy ? "bg-rose-500 shadow-rose-200 hover:bg-rose-600" : "bg-blue-600 shadow-blue-200 hover:bg-blue-700"}`}>
+          <button type="button" onClick={conversationBusy ? () => endConversation() : startConversation} disabled={stage === "closing"} aria-label={conversationBusy ? "End conversation" : "Start conversation"} className={`mx-auto grid size-20 place-items-center rounded-full text-white shadow-lg transition hover:-translate-y-0.5 ${conversationBusy ? "bg-rose-500 shadow-rose-200 hover:bg-rose-600" : "bg-blue-600 shadow-blue-200 hover:bg-blue-700"}`}>
             {conversationBusy ? <Square className="size-6 fill-current" /> : <Mic className="size-7" />}
           </button>
           <p className="mt-3 min-h-6 text-sm font-medium text-slate-700" aria-live="polite">{stageCopy[stage]}</p>
+          {architecture === "live" && sessionActive ? <p className="mt-2 text-xs text-blue-700">Microphone remains open during assistant speech · {liveBackendBusy ? "Backend working" : "Backend ready"}</p> : null}
           {error ? <p className="mx-auto mt-1 max-w-lg text-sm text-rose-600" role="alert">{error}</p> : null}
-          <button type="button" onClick={() => setShowTextInput((current) => !current)} className="mt-2 inline-flex items-center gap-2 text-sm font-medium text-slate-500 hover:text-slate-900"><Keyboard className="size-4" />{showTextInput ? "Hide keyboard" : "Prefer to type?"}</button>
-          {showTextInput ? (
+          {architecture !== "live" ? <button type="button" onClick={() => setShowTextInput((current) => !current)} className="mt-2 inline-flex items-center gap-2 text-sm font-medium text-slate-500 hover:text-slate-900"><Keyboard className="size-4" />{showTextInput ? "Hide keyboard" : "Prefer to type?"}</button> : null}
+          {showTextInput && architecture !== "live" ? (
             <form onSubmit={submitText} className="mx-auto mt-3 flex max-w-xl gap-2">
               <label htmlFor="message" className="sr-only">Message the voice agent</label>
               <input id="message" value={textInput} onChange={(event) => setTextInput(event.target.value)} placeholder="Ask anything…" maxLength={4000} className="min-w-0 flex-1 rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-950 outline-none transition focus:border-blue-400 focus:bg-white focus:ring-4 focus:ring-blue-100" />

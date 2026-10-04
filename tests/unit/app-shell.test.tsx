@@ -31,7 +31,7 @@ describe("AppShell", () => {
     const user = userEvent.setup();
     render(<AppShell />);
     expect(screen.getAllByTestId("pipeline-stage")).toHaveLength(5);
-    expect(screen.getByText(/gpt-transcribe/)).toBeInTheDocument();
+    expect(screen.getByText(/gpt-live-transcribe/)).toBeInTheDocument();
     expect(screen.getByText(/zai-org\/GLM-4.7/)).toBeInTheDocument();
     expect(screen.getByText(/gpt-4o-mini-tts/)).toBeInTheDocument();
     await user.click(screen.getByRole("radio", { name: /Speech-to-speech/ }));
@@ -47,7 +47,7 @@ describe("AppShell", () => {
     await user.click(screen.getByRole("button", { name: "View Python code for Speech-to-Text" }));
     expect(screen.getByRole("complementary", { name: "Python code inspector" })).toBeInTheDocument();
     expect(screen.getByText("Transcribe speech")).toBeInTheDocument();
-    expect(screen.getByText((_, element) => element?.tagName === "CODE" && Boolean(element.textContent?.includes("client.audio.transcriptions.create")))).toBeInTheDocument();
+    expect(screen.getByText((_, element) => element?.tagName === "CODE" && Boolean(element.textContent?.includes("gpt-live-transcribe")))).toBeInTheDocument();
   });
 
   it("keeps the pipeline beside the conversation workspace", () => {
@@ -94,6 +94,57 @@ describe("AppShell", () => {
       { role: "assistant", content: "Answer 1" },
     ]);
     expect(screen.getAllByText(/\d+ ms/).length).toBeGreaterThanOrEqual(3);
+  });
+
+  it("runs full-duplex captions and waits for Live finalization before closing media", async () => {
+    const channel = new EventTarget() as EventTarget & { readyState: string; send: (text: string) => void; close: () => void };
+    channel.readyState = "open";
+    const sent: string[] = [];
+    channel.send = (text) => sent.push(JSON.parse(text).type);
+    channel.close = vi.fn();
+    let closed = false;
+    vi.stubGlobal("RTCPeerConnection", class extends EventTarget {
+      iceGatheringState = "complete";
+      localDescription = { sdp: "offer" };
+      addTrack() {}
+      createDataChannel() { return channel; }
+      async createOffer() { return { sdp: "offer", type: "offer" }; }
+      async setLocalDescription() {}
+      async setRemoteDescription() { channel.dispatchEvent(new MessageEvent("message", { data: JSON.stringify({ type: "session.started" }) })); }
+      close() { closed = true; }
+    });
+    vi.stubGlobal("Audio", class { autoplay = false; srcObject = null; pause() {} async play() {} });
+    const track = { enabled: true, stop: vi.fn() };
+    vi.stubGlobal("navigator", { mediaDevices: { getUserMedia: async () => ({ getTracks: () => [track] }) } });
+    vi.stubGlobal("fetch", async () => Response.json({ session: { id: "live_test" }, transport: { sdp: "answer" } }));
+    const user = userEvent.setup();
+    render(<AppShell />);
+    await user.click(screen.getByRole("radio", { name: /GPT-Live/ }));
+    await user.click(screen.getByRole("button", { name: "Start conversation" }));
+    await screen.findByText(/Microphone remains open/);
+    await act(async () => {
+      for (const event of [
+        { type: "session.input_transcript.delta", delta: "I'd like", start_ms: 1000, end_ms: 1200 },
+        { type: "session.output_transcript.delta", delta: "Sure.", start_ms: 1100, end_ms: 1300 },
+        { type: "session.input_transcript.delta", delta: " to change my booking", start_ms: 1200, end_ms: 1600 },
+      ]) channel.dispatchEvent(new MessageEvent("message", { data: JSON.stringify(event) }));
+    });
+    expect(screen.getByText("I'd like to change my booking")).toBeInTheDocument();
+    expect(screen.getByText("Sure.")).toBeInTheDocument();
+    expect(track.enabled).toBe(true);
+    await user.click(screen.getByRole("button", { name: "End conversation" }));
+    expect(sent).toContain("session.close");
+    expect(closed).toBe(false);
+    expect(screen.getByText(/Finishing the live session/)).toBeInTheDocument();
+    await act(async () => { channel.dispatchEvent(new MessageEvent("message", { data: JSON.stringify({ type: "session.closed", usage: { seconds: 12 } }) })); });
+    expect(closed).toBe(true);
+    expect(track.stop).toHaveBeenCalledOnce();
+    expect(screen.getByRole("button", { name: "Start conversation" })).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Start conversation" }));
+    await screen.findByText(/Microphone remains open/);
+    await act(async () => { channel.dispatchEvent(new Event("close")); });
+    expect(screen.getByRole("alert")).toHaveTextContent(/connection.*closed/i);
+    expect(screen.getByRole("button", { name: "Start conversation" })).toBeInTheDocument();
   });
 
   it("makes the live recording action prominent", () => {

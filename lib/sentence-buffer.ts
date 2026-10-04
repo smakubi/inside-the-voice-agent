@@ -1,6 +1,7 @@
 /** Keep token boundaries out of spoken sentences; cap long unpunctuated spans. */
 export class SentenceBuffer {
   private pending = "";
+  private emitted = false;
   constructor(private readonly maxCharacters = 240) {}
 
   push(delta: string): string[] {
@@ -24,6 +25,15 @@ export class SentenceBuffer {
         boundary = end;
         break;
       }
+      // Only the opening phrase is eager; later sentences keep their prosody.
+      if (!boundary && !this.emitted) {
+        const clause = /[,;:]\s/.exec(this.pending);
+        if (clause && clause.index >= 24) boundary = clause.index + 1;
+        else if (this.pending.length > 100) {
+          const space = this.pending.lastIndexOf(" ", 100);
+          if (space > 0) boundary = space;
+        }
+      }
       if ((!boundary || boundary > this.maxCharacters) && this.pending.length > this.maxCharacters) {
         const space = this.pending.lastIndexOf(" ", this.maxCharacters);
         boundary = space > 0 ? space : this.maxCharacters;
@@ -31,7 +41,7 @@ export class SentenceBuffer {
       if (!boundary && final) boundary = this.pending.length;
       if (!boundary) break;
       const sentence = this.pending.slice(0, boundary).trim();
-      if (sentence) result.push(sentence);
+      if (sentence) { result.push(sentence); this.emitted = true; }
       this.pending = this.pending.slice(boundary).trimStart();
     }
     return result;

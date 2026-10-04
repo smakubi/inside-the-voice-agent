@@ -6,15 +6,16 @@ import type { ArchitectureMode } from "@/types/pipeline";
 interface Props { value: ArchitectureMode; onChange: (value: ArchitectureMode) => void; }
 
 const options = [
-  { value: "cascaded" as const, label: "Cascaded", description: "The live demo", icon: Layers3 },
-  { value: "realtime" as const, label: "Speech-to-speech", description: "Live WebRTC", icon: Radio },
+  { value: "cascaded" as const, label: "Cascaded", description: "Streaming STT + VAD", icon: Layers3 },
+  { value: "live" as const, label: "GPT-Live", description: "Full duplex", icon: Radio },
+  { value: "realtime" as const, label: "Speech-to-speech", description: "Native Realtime", icon: Radio },
 ];
 
 export function ArchitectureToggle({ value, onChange }: Props) {
   return (
     <fieldset>
       <legend className="mb-3 text-sm font-semibold text-slate-900">Architecture</legend>
-      <div className="grid grid-cols-2 gap-2" role="radiogroup" aria-label="Voice architecture">
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-2" role="radiogroup" aria-label="Voice architecture">
         {options.map((option) => {
           const active = value === option.value;
           const Icon = option.icon;

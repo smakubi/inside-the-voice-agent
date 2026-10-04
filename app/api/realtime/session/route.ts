@@ -35,7 +35,7 @@ export async function POST(request: Request) {
     audio: {
       input: {
         transcription: { model: "gpt-4o-transcribe" },
-        turn_detection: { type: "semantic_vad", eagerness: "medium", create_response: true, interrupt_response: true },
+        turn_detection: { type: "semantic_vad", eagerness: "high", create_response: true, interrupt_response: true },
       },
       output: { voice: "marin" },
     },
@@ -64,6 +64,7 @@ export async function POST(request: Request) {
       method: "POST",
       headers: { Authorization: `Bearer ${apiKey}` },
       body: formData,
+      signal: AbortSignal.any([request.signal, AbortSignal.timeout(20_000)]),
     });
     const answer = await response.text();
 

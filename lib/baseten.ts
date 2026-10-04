@@ -14,5 +14,13 @@ export function getBaseten() {
     apiKey,
     baseURL: "https://inference.baseten.co/v1",
     name: "baseten",
+    // The OpenAI adapter filters unknown provider options. Add Baseten's
+    // documented template flag at the wire boundary, not as an ignored option.
+    fetch: (url, init) => {
+      const body = typeof init?.body === "string" ? JSON.parse(init.body) : undefined;
+      return fetch(url, body?.model === "zai-org/GLM-4.7" ? {
+        ...init, body: JSON.stringify({ ...body, chat_template_args: { enable_thinking: false } }),
+      } : init);
+    },
   });
 }

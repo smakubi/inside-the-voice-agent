@@ -3,7 +3,7 @@ export const voiceModels = {
   liveBackend: "gpt-6-luna",
   liveTranscription: "gpt-live-transcribe",
   transcription: "gpt-transcribe",
-  response: "zai-org/GLM-4.7",
+  response: "zai-org/GLM-5.3-Flash",
   webSearch: "gpt-5.6-luna",
   speech: "gpt-4o-mini-tts",
   realtime: "gpt-realtime-2.1",
